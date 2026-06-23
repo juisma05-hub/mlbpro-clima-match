@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLBPro · Juegos de hoy</title>
+<style>
+  body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+  h1{font-size:18px;color:#f5c518;margin:0 0 4px}
+  .sub{color:#888;font-size:13px;margin-bottom:16px}
+  #btnJalar{width:100%;padding:16px;font-size:16px;font-weight:700;color:#000;background:#f5c518;border:none;border-radius:12px;letter-spacing:.5px}
+  #btnJalar:disabled{opacity:.5}
+  #estado{margin:14px 0;font-size:13px;color:#9ad}
+  .juego{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+  .matchup{font-size:16px;font-weight:700;color:#fff}
+  .estadio{color:#f5c518;font-size:14px;margin-top:4px}
+  .meta{color:#aaa;font-size:13px;margin-top:2px}
+  .err{color:#ff6b6b;white-space:pre-wrap;font-family:monospace;font-size:12px}
+</style>
+</head>
+<body>
+  <h1>MLBPro · Coincidencia climática</h1>
+  <div class="sub" id="fechaHoy"></div>
+  <button id="btnJalar">JALAR JUEGOS DE HOY</button>
+  <div id="estado"></div>
+  <div id="lista"></div>
+  <script src="mlb-climate-match.js"></script>
+  <script>
+    const R = window.MLBClimateRoutes;
+    const fechaHoy = R.fechaHoyISO();
+    document.getElementById("fechaHoy").textContent = "Fecha: " + fechaHoy;
+    const btn = document.getElementById("btnJalar");
+    const estado = document.getElementById("estado");
+    const lista = document.getElementById("lista");
+    btn.addEventListener("click", jalarJuegosHoy);
+    async function jalarJuegosHoy() {
+      btn.disabled = true;
+      lista.innerHTML = "";
+      estado.className = "";
+      estado.textContent = "Jalando schedule de hoy…";
+      const url = R.scheduleUrl(fechaHoy);
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          throw new Error("HTTP " + resp.status + " " + resp.statusText + "\n" + url);
+        }
+        const data = await resp.json();
+        const dia = (data.dates && data.dates[0]) ? data.dates[0] : null;
+        const juegos = dia ? dia.games : [];
+        if (!juegos || juegos.length === 0) {
+          estado.textContent = "0 juegos hoy (" + fechaHoy + ").";
+          btn.disabled = false;
+          return;
+        }
+        estado.textContent = "Juegos hoy: " + juegos.length;
+        juegos.forEach(renderJuego);
+      } catch (e) {
+        estado.className = "err";
+        estado.textContent = "ERROR REAL DE FETCH:\n" + e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    function renderJuego(g) {
+      const away = g.teams && g.teams.away ? g.teams.away.team.name : "?";
+      const home = g.teams && g.teams.home ? g.teams.home.team.name : "?";
+      const venueName = g.venue ? g.venue.name : "SIN ESTADIO";
+      const venueId = g.venue ? g.venue.id : "SIN venueId";
+      let hora = "SIN HORA";
+      if (g.gameDate) {
+        hora = new Date(g.gameDate).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      }
+      const div = document.createElement("div");
+      div.className = "juego";
+      div.innerHTML =
+        '<div class="matchup">' + away + " @ " + home + '</div>' +
+        '<div class="estadio">' + venueName + '</div>' +
+        '<div class="meta">venueId: ' + venueId + " · " + hora + '</div>';
+      lista.appendChild(div);
+    }
+  </script>
+</body>
+</html>
