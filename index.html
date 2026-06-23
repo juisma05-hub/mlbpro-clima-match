@@ -3,148 +3,306 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MLBPro · Juegos de hoy</title>
+<title>MLBPro · Coincidencia climática</title>
 <style>
-  body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
-  h1{font-size:18px;color:#f5c518;margin:0 0 4px}
-  .sub{color:#888;font-size:13px;margin-bottom:16px}
-  #btnJalar{width:100%;padding:16px;font-size:16px;font-weight:700;color:#000;background:#f5c518;border:none;border-radius:12px;letter-spacing:.5px}
-  #btnJalar:disabled{opacity:.5}
-  #estado{margin:14px 0;font-size:13px;color:#9ad}
-  .juego{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
-  .matchup{font-size:16px;font-weight:700;color:#fff}
-  .estadio{color:#f5c518;font-size:14px;margin-top:4px}
-  .meta{color:#aaa;font-size:13px;margin-top:2px}
-  .clima{margin-top:10px;font-size:13px;color:#cfe}
-  .clima-row{margin-top:2px}
-  .clima-pend{color:#f5c518}
-  .err{color:#ff6b6b;white-space:pre-wrap;font-family:monospace;font-size:12px}
+body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:18px;color:#f5c518;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin-bottom:12px}
+button{width:100%;padding:15px;margin:6px 0;font-size:15px;font-weight:800;color:#000;background:#f5c518;border:none;border-radius:12px}
+button:disabled{opacity:.5}
+#estado{margin:12px 0;font-size:13px;color:#9ad}
+.juego{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+.matchup{font-size:16px;font-weight:800;color:#fff}
+.estadio{color:#f5c518;font-size:14px;margin-top:4px}
+.meta,.clima,.match{color:#ccc;font-size:13px;margin-top:5px}
+.ok{color:#41f07a}.mid{color:#f5c518}.bad{color:#ff6b6b}
+.err{color:#ff6b6b;white-space:pre-wrap;font-family:monospace;font-size:12px}
+.hist{border-top:1px solid #333;margin-top:8px;padding-top:8px}
+.small{font-size:12px;color:#999}
 </style>
 </head>
 <body>
-  <h1>MLBPro · Coincidencia climática</h1>
-  <div class="sub" id="fechaHoy"></div>
-  <button id="btnJalar">JALAR JUEGOS DE HOY</button>
-  <div id="estado"></div>
-  <div id="lista"></div>
-  <script src="mlb-climate-match.js"></script>
-  <script>
-    const R = window.MLBClimateRoutes;
-    const fechaHoy = R.fechaHoyISO();
+<h1>MLBPro · Coincidencia climática</h1>
+<div class="sub" id="fechaHoy"></div>
 
-    document.getElementById("fechaHoy").textContent = "Fecha: " + fechaHoy;
+<button id="btnHoy">JALAR JUEGOS DE HOY</button>
+<button id="btnHist">JALAR HISTÓRICO 2026</button>
+<button id="btnMatch">CALCULAR COINCIDENCIA</button>
 
-    const btn = document.getElementById("btnJalar");
-    const estado = document.getElementById("estado");
-    const lista = document.getElementById("lista");
+<div id="estado"></div>
+<div id="lista"></div>
 
-    btn.addEventListener("click", jalarJuegosHoy);
+<script src="mlb-climate-match.js"></script>
+<script>
+const R = window.MLBClimateRoutes;
+const fechaHoy = R.fechaHoyISO();
+const fechaInicio = "2026-03-26";
+const STORAGE_KEY = "MLBPRO_CLIMATE_HISTORY_2026";
 
-    async function jalarJuegosHoy() {
-      btn.disabled = true;
-      lista.innerHTML = "";
-      estado.className = "";
-      estado.textContent = "Jalando schedule de hoy…";
+document.getElementById("fechaHoy").textContent = "Fecha: " + fechaHoy;
 
-      const url = R.scheduleUrl(fechaHoy);
+const btnHoy = document.getElementById("btnHoy");
+const btnHist = document.getElementById("btnHist");
+const btnMatch = document.getElementById("btnMatch");
+const estado = document.getElementById("estado");
+const lista = document.getElementById("lista");
 
-      try {
-        const resp = await fetch(url);
-        if (!resp.ok) {
-          throw new Error("HTTP " + resp.status + " " + resp.statusText + "\n" + url);
-        }
+let juegosHoy = [];
+let climaHoy = {};
 
-        const data = await resp.json();
-        const dia = (data.dates && data.dates[0]) ? data.dates[0] : null;
-        const juegos = dia ? dia.games : [];
+btnHoy.addEventListener("click", jalarJuegosHoy);
+btnHist.addEventListener("click", jalarHistorico);
+btnMatch.addEventListener("click", calcularCoincidencia);
 
-        if (!juegos || juegos.length === 0) {
-          estado.textContent = "0 juegos hoy (" + fechaHoy + ").";
-          btn.disabled = false;
-          return;
-        }
+function ayerISO(){
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0,10);
+}
 
-        estado.textContent = "Juegos hoy: " + juegos.length;
-        juegos.forEach(renderJuego);
-        juegos.forEach(cargarClima);
-      } catch (e) {
-        estado.className = "err";
-        estado.textContent = "ERROR REAL DE FETCH:\n" + e.message;
-      } finally {
-        btn.disabled = false;
-      }
+function diasEntre(inicio, fin){
+  const out = [];
+  let d = new Date(inicio + "T12:00:00");
+  const end = new Date(fin + "T12:00:00");
+  while(d <= end){
+    out.push(d.toISOString().slice(0,10));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+function archiveWeatherUrl(lat, lon, date){
+  return "https://archive-api.open-meteo.com/v1/archive" +
+    "?latitude=" + lat +
+    "&longitude=" + lon +
+    "&start_date=" + date +
+    "&end_date=" + date +
+    "&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m" +
+    "&temperature_unit=fahrenheit" +
+    "&wind_speed_unit=mph" +
+    "&timezone=auto";
+}
+
+async function jalarJuegosHoy(){
+  btnHoy.disabled = true;
+  lista.innerHTML = "";
+  estado.className = "";
+  estado.textContent = "Jalando juegos de hoy…";
+  juegosHoy = [];
+  climaHoy = {};
+
+  try{
+    const resp = await fetch(R.scheduleUrl(fechaHoy));
+    if(!resp.ok) throw new Error("schedule HTTP " + resp.status);
+    const data = await resp.json();
+    const dia = data.dates && data.dates[0] ? data.dates[0] : null;
+    juegosHoy = dia ? dia.games : [];
+
+    estado.textContent = "Juegos hoy: " + juegosHoy.length;
+    juegosHoy.forEach(renderJuego);
+
+    for(const g of juegosHoy){
+      await cargarClimaHoy(g);
     }
+  }catch(e){
+    estado.className = "err";
+    estado.textContent = "ERROR:\n" + e.message;
+  }finally{
+    btnHoy.disabled = false;
+  }
+}
 
-    function renderJuego(g) {
-      const away = g.teams && g.teams.away ? g.teams.away.team.name : "?";
-      const home = g.teams && g.teams.home ? g.teams.home.team.name : "?";
-      const venueName = g.venue ? g.venue.name : "SIN ESTADIO";
-      const venueId = g.venue ? g.venue.id : "SIN venueId";
+function renderJuego(g){
+  const away = g.teams?.away?.team?.name || "?";
+  const home = g.teams?.home?.team?.name || "?";
+  const venueName = g.venue?.name || "SIN ESTADIO";
+  const venueId = g.venue?.id || "SIN venueId";
+  const hora = g.gameDate ? new Date(g.gameDate).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}) : "SIN HORA";
 
-      let hora = "SIN HORA";
-      if (g.gameDate) {
-        hora = new Date(g.gameDate).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
-      }
+  const div = document.createElement("div");
+  div.className = "juego";
+  div.id = "juego-" + g.gamePk;
+  div.innerHTML =
+    '<div class="matchup">' + away + " @ " + home + '</div>' +
+    '<div class="estadio">' + venueName + '</div>' +
+    '<div class="meta">venueId: ' + venueId + " · " + hora + '</div>' +
+    '<div class="clima" id="clima-' + g.gamePk + '">Cargando clima…</div>' +
+    '<div class="match" id="match-' + g.gamePk + '"></div>';
+  lista.appendChild(div);
+}
 
-      const div = document.createElement("div");
-      div.className = "juego";
-      div.id = "juego-" + g.gamePk;
+async function getCoords(venueId){
+  const vResp = await fetch(R.venueUrl(venueId));
+  if(!vResp.ok) throw new Error("venue HTTP " + vResp.status);
+  const vData = await vResp.json();
+  const venue = vData.venues && vData.venues[0] ? vData.venues[0] : null;
+  const coords = venue?.location?.defaultCoordinates;
+  if(!coords) throw new Error("SIN COORDENADAS");
+  return {lat: coords.latitude, lon: coords.longitude};
+}
 
-      div.innerHTML =
-        '<div class="matchup">' + away + " @ " + home + '</div>' +
-        '<div class="estadio">' + venueName + '</div>' +
-        '<div class="meta">venueId: ' + venueId + " · " + hora + '</div>' +
-        '<div class="clima" id="clima-' + g.gamePk + '">Cargando clima…</div>';
-
-      lista.appendChild(div);
-    }
-async function cargarClima(g) {
+async function cargarClimaHoy(g){
   const cont = document.getElementById("clima-" + g.gamePk);
-  if (!cont) return;
+  try{
+    const venueId = g.venue?.id;
+    const coords = await getCoords(venueId);
+    const wResp = await fetch(R.weatherUrl(coords.lat, coords.lon));
+    if(!wResp.ok) throw new Error("weather HTTP " + wResp.status);
+    const wData = await wResp.json();
+    const c = wData.current;
+    climaHoy[g.gamePk] = {
+      gamePk:g.gamePk,
+      venue:g.venue?.name || "",
+      venueId:venueId,
+      tempF:Number(c.temperature_2m),
+      humidity:Number(c.relative_humidity_2m),
+      precip:Number(c.precipitation),
+      windMph:Number(c.wind_speed_10m),
+      roof:g.venue?.roof || ""
+    };
+    cont.innerHTML =
+      "Temp: " + c.temperature_2m + "°F<br>" +
+      "Humedad: " + c.relative_humidity_2m + "%<br>" +
+      "Precipitación: " + c.precipitation + "<br>" +
+      "Viento: " + c.wind_speed_10m + " mph";
+  }catch(e){
+    cont.innerHTML = '<span class="err">ERROR CLIMA: ' + e.message + '</span>';
+  }
+}
 
-  const venueId = g.venue ? g.venue.id : null;
+async function jalarHistorico(){
+  btnHist.disabled = true;
+  estado.className = "";
+  estado.textContent = "Jalando histórico desde " + fechaInicio + " hasta ayer…";
 
-  if (!venueId) {
-    cont.innerHTML = '<span class="clima-pend">SIN venueId</span>';
+  const fechas = diasEntre(fechaInicio, ayerISO());
+  const rows = [];
+  const venueCache = {};
+
+  try{
+    for(const fecha of fechas){
+      estado.textContent = "Histórico: " + fecha + " · guardados " + rows.length;
+      const sResp = await fetch(R.scheduleUrl(fecha));
+      if(!sResp.ok) continue;
+      const sData = await sResp.json();
+      const games = sData.dates?.[0]?.games || [];
+
+      for(const g of games){
+        if(g.status?.detailedState === "Postponed") continue;
+        const venueId = g.venue?.id;
+        const venueName = g.venue?.name || "";
+        if(!venueId || !venueName) continue;
+
+        if(!venueCache[venueId]){
+          try{ venueCache[venueId] = await getCoords(venueId); }
+          catch(e){ continue; }
+        }
+
+        const coords = venueCache[venueId];
+        const wResp = await fetch(archiveWeatherUrl(coords.lat, coords.lon, fecha));
+        if(!wResp.ok) continue;
+        const wData = await wResp.json();
+        const h = wData.hourly;
+        if(!h || !h.time || !h.time.length) continue;
+
+        const idx = Math.min(19, h.time.length - 1);
+
+        rows.push({
+          date: fecha,
+          gamePk: g.gamePk,
+          home: g.teams?.home?.team?.name || "",
+          away: g.teams?.away?.team?.name || "",
+          venue: venueName,
+          venueId: venueId,
+          tempF: Number(h.temperature_2m[idx]),
+          humidity: Number(h.relative_humidity_2m[idx]),
+          precip: Number(h.precipitation[idx]),
+          windMph: Number(h.wind_speed_10m[idx]),
+          windDir: Number(h.wind_direction_10m[idx])
+        });
+      }
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+    }
+
+    estado.textContent = "Histórico guardado: " + rows.length + " juegos.";
+  }catch(e){
+    estado.className = "err";
+    estado.textContent = "ERROR HISTÓRICO:\n" + e.message;
+  }finally{
+    btnHist.disabled = false;
+  }
+}
+
+function scoreMatch(today, hist){
+  if(!today || !hist) return 0;
+  let score = 0;
+
+  if(today.venue === hist.venue) score += 35;
+
+  const tempDiff = Math.abs(today.tempF - hist.tempF);
+  const windDiff = Math.abs(today.windMph - hist.windMph);
+  const humDiff = Math.abs(today.humidity - hist.humidity);
+  const preDiff = Math.abs(today.precip - hist.precip);
+
+  score += Math.max(0, 25 - tempDiff * 3);
+  score += Math.max(0, 20 - windDiff * 4);
+  score += Math.max(0, 15 - humDiff);
+  score += Math.max(0, 5 - preDiff * 5);
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function calcularCoincidencia(){
+  const hist = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+
+  if(!juegosHoy.length){
+    estado.textContent = "Primero toca JALAR JUEGOS DE HOY.";
     return;
   }
 
-  try {
-    const vResp = await fetch(R.venueUrl(venueId));
-    if (!vResp.ok) {
-      throw new Error("venues HTTP " + vResp.status + " " + vResp.statusText);
-    }
-
-    const vData = await vResp.json();
-    const venue = vData.venues && vData.venues[0] ? vData.venues[0] : null;
-    const coords = venue && venue.location ? venue.location.defaultCoordinates : null;
-
-    if (!coords || coords.latitude == null || coords.longitude == null) {
-      cont.innerHTML = '<span class="clima-pend">SIN COORDENADAS</span>';
-      return;
-    }
-
-    const wResp = await fetch(R.weatherUrl(coords.latitude, coords.longitude));
-    if (!wResp.ok) {
-      throw new Error("open-meteo HTTP " + wResp.status + " " + wResp.statusText);
-    }
-
-    const wData = await wResp.json();
-    const c = wData.current;
-
-    if (!c) {
-      cont.innerHTML = '<span class="clima-pend">SIN CLIMA</span>';
-      return;
-    }
-
-    cont.innerHTML =
-      '<div class="clima-row">Temp: ' + c.temperature_2m + '°F</div>' +
-      '<div class="clima-row">Humedad: ' + c.relative_humidity_2m + '%</div>' +
-      '<div class="clima-row">Precipitación: ' + c.precipitation + '</div>' +
-      '<div class="clima-row">Viento: ' + c.wind_speed_10m + ' mph</div>';
-  } catch (e) {
-    cont.innerHTML = '<span class="err">ERROR REAL DE FETCH:\n' + e.message + '</span>';
+  if(!hist.length){
+    estado.textContent = "Primero toca JALAR HISTÓRICO 2026.";
+    return;
   }
+
+  juegosHoy.forEach(g => {
+    const box = document.getElementById("match-" + g.gamePk);
+    const today = climaHoy[g.gamePk];
+
+    if(!today){
+      box.innerHTML = '<span class="bad">SIN CLIMA DE HOY</span>';
+      return;
+    }
+
+    const ranked = hist
+      .filter(x => x.venue === today.venue)
+      .map(x => ({...x, score: scoreMatch(today, x)}))
+      .sort((a,b) => b.score - a.score)
+      .slice(0,3);
+
+    if(!ranked.length){
+      box.innerHTML = '<span class="bad">SIN HISTÓRICO MISMO ESTADIO</span>';
+      return;
+    }
+
+    const top = ranked[0];
+    const cls = top.score >= 80 ? "ok" : top.score >= 65 ? "mid" : "bad";
+    const sem = top.score >= 80 ? "🟢" : top.score >= 65 ? "🟡" : "🔴";
+
+    box.innerHTML =
+      '<div class="hist"><b class="' + cls + '">' + sem + " Coincidencia: " + top.score + "%</b></div>" +
+      ranked.map(r =>
+        '<div class="small">' +
+        r.date + " · " + r.away + " @ " + r.home +
+        " · " + r.tempF + "°F" +
+        " · viento " + r.windMph + " mph" +
+        " · hum " + r.humidity + "%" +
+        '</div>'
+      ).join("");
+  });
+
+  estado.textContent = "Coincidencia calculada.";
 }
 </script>
 </body>
