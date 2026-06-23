@@ -49,9 +49,33 @@ const lista = document.getElementById("lista");
 
 let juegosHoy = [];
 let climaHoy = {};
+let coincidenciasHTML = "";
 
+function cargarHistoricoCache(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return false;
+    climaHoy = JSON.parse(raw);
+    estado.textContent = "Histórico cargado desde cache.";
+    return true;
+  }catch(e){
+    return false;
+  }
+}
+
+function guardarHistoricoCache(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(climaHoy));
+  }catch(e){
+    estado.textContent = "Histórico cargado, pero no se pudo guardar cache.";
+  }
+}
 btnHoy.addEventListener("click", jalarJuegosHoy);
-btnHist.addEventListener("click", jalarHistorico);
+btnHist.addEventListener("click", async () => {
+  if(cargarHistoricoCache()) return;
+  await jalarHistorico();
+  guardarHistoricoCache();
+});
 btnMatch.addEventListener("click", calcularCoincidencia);
 btnConclusion.addEventListener("click", generarConclusionCoincidencia);
 function ayerISO(){
