@@ -13,416 +13,637 @@ button:disabled{opacity:.5}
 #estado{margin:12px 0;font-size:13px;color:#9ad}
 .juego{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
 .matchup{font-size:16px;font-weight:800;color:#fff}
-.estadio{color:#f5c518;font-size:14px;margin-top:4px}
-.meta,.clima,.match{color:#ccc;font-size:13px;margin-top:5px}
-.ok{color:#41f07a}.mid{color:#f5c518}.bad{color:#ff6b6b}
-.err{color:#ff6b6b;white-space:pre-wrap;font-family:monospace;font-size:12px}
-.hist{border-top:1px solid #333;margin-top:8px;padding-top:8px}
-.small{font-size:12px;color:#999}
+.estadio{font-size:13px;color:#bbb;margin:3px 0 8px}
+.meta{font-size:13px;color:#ddd;margin:4px 0}
+.ok{color:#32d74b;font-weight:800}
+.mid{color:#ffd60a;font-weight:800}
+.bad{color:#ff453a;font-weight:800}
+.small{font-size:12px;color:#aaa;margin-top:5px}
+.match{margin-top:8px;padding:8px;border-radius:8px;background:#111;border:1px solid #333}
+.hist{margin-top:8px;border-top:1px solid #222;padding-top:8px}
 </style>
 </head>
+
 <body>
 <h1>MLBPro · Coincidencia climática</h1>
-<div class="sub" id="fechaHoy"></div>
+<div class="sub">Data Madre 2026 · Caja de Pandora</div>
 
-<button id="btnHoy">JALAR JUEGOS DE HOY</button>
-<button id="btnHist">JALAR HISTÓRICO 2026</button>
-<button id="btnMatch">CALCULAR COINCIDENCIA</button>
-<button id="btnConclusion">CONCLUSIÓN DE COINCIDENCIA</button>
+<button onclick="jalarJuegosHoy()">JALAR JUEGOS DE HOY</button>
+<button onclick="jalarHistorico2026()">JALAR HISTÓRICO 2026</button>
+<button onclick="calcularCoincidencia()">CALCULAR COINCIDENCIA</button>
+<button onclick="generarConclusionCoincidencia()">CONCLUSIÓN DE COINCIDENCIA</button>
 
-<div id="estado"></div>
+<div id="estado">Listo.</div>
 <div id="lista"></div>
 
-<script src="mlb-climate-match.js"></script>
 <script>
-const R = window.MLBClimateRoutes;
-const fechaHoy = R.fechaHoyISO();
-const fechaInicio = "2026-03-26";
-const STORAGE_KEY = "MLBPRO_CLIMATE_HISTORY_2026";
+const PROXY="https://mlb-score-proxy.jip0512.workers.dev/?url=";
+const MLB_BASE="https://statsapi.mlb.com/api/v1";
+const START_HIST="2026-03-26";
+const CACHE_HIST="MLBPRO_DATA_MADRE_HIST_2026_V1";
 
-document.getElementById("fechaHoy").textContent = "Fecha: " + fechaHoy;
+let juegosHoy=[];
+let climaHoy={};
+let historico2026=[];
 
-const btnHoy = document.getElementById("btnHoy");
-const btnHist = document.getElementById("btnHist");
-const btnMatch = document.getElementById("btnMatch");
-const btnConclusion = document.getElementById("btnConclusion");
-const estado = document.getElementById("estado");
-const lista = document.getElementById("lista");
+function viaProxy(url){
+  return PROXY + encodeURIComponent(url);
+}
 
-let juegosHoy = [];
-let climaHoy = {};
-let historico2026 = [];
-
-btnHoy.addEventListener("click", jalarJuegosHoy);
-btnHist.addEventListener("click", jalarHistoricoSeguro);
-btnMatch.addEventListener("click", calcularCoincidencia);
-btnConclusion.addEventListener("click", generarConclusionCoincidencia);
-
-function ayerISO(){
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
+function hoyISO(){
+  const d=new Date();
   return d.toISOString().slice(0,10);
 }
 
-function diasEntre(inicio, fin){
-  const out = [];
-  let d = new Date(inicio + "T12:00:00");
-  const end = new Date(fin + "T12:00:00");
-  while(d <= end){
-    out.push(d.toISOString().slice(0,10));
-    d.setDate(d.getDate() + 1);
-  }
-  return out;
+function ayerISO(){
+  const d=new Date();
+  d.setDate(d.getDate()-1);
+  return d.toISOString().slice(0,10);
 }
 
-function archiveWeatherUrl(lat, lon, date){
-  return "https://archive-api.open-meteo.com/v1/archive" +
-    "?latitude=" + lat +
-    "&longitude=" + lon +
-    "&start_date=" + date +
-    "&end_date=" + date +
-    "&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m" +
-    "&temperature_unit=fahrenheit" +
-    "&wind_speed_unit=mph" +
-    "&timezone=auto";
+function addDays(dateISO,n){
+  const d=new Date(dateISO+"T12:00:00");
+  d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+
+function setEstado(t){
+  document.getElementById("estado").textContent=t;
+}
+
+function render(html){
+  document.getElementById("lista").innerHTML=html;
+}
+
+function safe(x){
+  return Number.isFinite(Number(x)) ? Number(x) : "NO";
+}
+
+async function fetchJSON(url){
+  const r=await fetch(url);
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return await r.json();
+}
+
+async function scheduleByDate(dateISO){
+  const url=viaProxy(`${MLB_BASE}/schedule?sportId=1&date=${dateISO}&hydrate=venue`);
+  const j=await fetchJSON(url);
+  return j.dates?.[0]?.games || [];
+}
+
+async function getVenueFull(venueId){
+  const url=viaProxy(`${MLB_BASE}/venues/${venueId}?hydrate=location`);
+  const j=await fetchJSON(url);
+  return j.venues?.[0] || null;
+}
+
+function coordsFromVenue(v){
+  const loc=v?.location || {};
+  const dc=loc.defaultCoordinates || {};
+  const lat=Number(dc.latitude ?? loc.latitude);
+  const lon=Number(dc.longitude ?? loc.longitude);
+  if(Number.isFinite(lat) && Number.isFinite(lon)) return {lat,lon};
+  return null;
+}
+
+async function getClimaActual(lat,lon){
+  const url=
+    "https://api.open-meteo.com/v1/forecast"+
+    `?latitude=${lat}&longitude=${lon}`+
+    "&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m"+
+    "&temperature_unit=fahrenheit&wind_speed_unit=mph";
+  const j=await fetchJSON(url);
+  const c=j.current || {};
+  return {
+    tempF:Number(c.temperature_2m),
+    humidity:Number(c.relative_humidity_2m),
+    precip:Number(c.precipitation),
+    windMph:Number(c.wind_speed_10m),
+    windDir:Number(c.wind_direction_10m)
+  };
+}
+
+async function getClimaHistorico(lat,lon,dateISO,gameDate){
+  const url=
+    "https://archive-api.open-meteo.com/v1/archive"+
+    `?latitude=${lat}&longitude=${lon}`+
+    `&start_date=${dateISO}&end_date=${dateISO}`+
+    "&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m"+
+    "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=America/New_York";
+
+  const j=await fetchJSON(url);
+  const h=j.hourly || {};
+  const times=h.time || [];
+  if(!times.length) return null;
+
+  let targetHour=19;
+  try{
+    const d=new Date(gameDate);
+    if(Number.isFinite(d.getHours())) targetHour=d.getHours();
+  }catch(e){}
+
+  let best=0;
+  let diff=999;
+
+  for(let i=0;i<times.length;i++){
+    const hour=Number(String(times[i]).slice(11,13));
+    const d=Math.abs(hour-targetHour);
+    if(d<diff){
+      diff=d;
+      best=i;
+    }
+  }
+
+  return {
+    tempF:Number(h.temperature_2m?.[best]),
+    humidity:Number(h.relative_humidity_2m?.[best]),
+    precip:Number(h.precipitation?.[best]),
+    windMph:Number(h.wind_speed_10m?.[best]),
+    windDir:Number(h.wind_direction_10m?.[best])
+  };
+}
+
+function guardarHistoricoCache(rows){
+  try{
+    localStorage.setItem(CACHE_HIST,JSON.stringify(rows));
+  }catch(e){}
 }
 
 function leerHistoricoCache(){
   try{
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw=localStorage.getItem(CACHE_HIST);
     if(!raw) return [];
-    const parsed = JSON.parse(raw);
-    const arr = Array.isArray(parsed) ? parsed : Object.values(parsed);
-    return arr;
+    const arr=JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
   }catch(e){
     return [];
   }
 }
 
-async function jalarHistoricoSeguro(){
-  const cache = leerHistoricoCache();
+function cardJuegoHoy(g,c){
+  const away=g.teams?.away?.team?.name || "?";
+  const home=g.teams?.home?.team?.name || "?";
+  const venue=g.venue?.name || "SIN PARQUE";
 
-  if(cache.length >= 1000){
-    historico2026 = cache;
-    estado.className = "";
-    estado.textContent = "Histórico cargado desde cache: " + cache.length + " juegos.";
-    return;
-  }
-
-  if(cache.length > 0 && cache.length < 1000){
-    localStorage.removeItem(STORAGE_KEY);
-    historico2026 = [];
-    estado.textContent = "Cache incompleto borrado. Cargando histórico completo…";
-  }
-
-  await jalarHistorico();
+  return `
+    <div class="juego">
+      <div class="matchup">${away} @ ${home}</div>
+      <div class="estadio">${venue}</div>
+      ${
+        c ? `
+        <div class="meta">Temp: ${safe(c.tempF)}°F</div>
+        <div class="meta">Humedad: ${safe(c.humidity)}%</div>
+        <div class="meta">Precip: ${safe(c.precip)}</div>
+        <div class="meta">Viento: ${safe(c.windMph)} mph</div>
+        <div class="meta">Dir viento: ${Number.isFinite(c.windDir)?c.windDir+"°":"NO CONFIRMADA"}</div>
+        <div class="meta">Roof: ${c.roof || "NO CONFIRMADO"}</div>
+        ` : `<div class="bad">Clima no confirmado</div>`
+      }
+    </div>
+  `;
 }
 
 async function jalarJuegosHoy(){
-  btnHoy.disabled = true;
-  lista.innerHTML = "";
-  estado.className = "";
-  estado.textContent = "Jalando juegos de hoy…";
-  juegosHoy = [];
-  climaHoy = {};
-
   try{
-    const resp = await fetch(R.scheduleUrl(fechaHoy));
-    if(!resp.ok) throw new Error("schedule HTTP " + resp.status);
-    const data = await resp.json();
-    const dia = data.dates && data.dates[0] ? data.dates[0] : null;
-    juegosHoy = dia ? dia.games : [];
+    setEstado("Jalando juegos de hoy...");
+    render("");
 
-    estado.textContent = "Juegos hoy: " + juegosHoy.length;
-    juegosHoy.forEach(renderJuego);
+    const games=await scheduleByDate(hoyISO());
+    juegosHoy=games;
+    climaHoy={};
 
-    for(const g of juegosHoy){
-      await cargarClimaHoy(g);
+    let html="";
+
+    for(const g of games){
+      const venueId=g.venue?.id;
+      let venueFull=null;
+      let coords=null;
+
+      if(venueId){
+        venueFull=await getVenueFull(venueId);
+        coords=coordsFromVenue(venueFull);
+      }
+
+      if(coords){
+        const clima=await getClimaActual(coords.lat,coords.lon);
+        climaHoy[g.gamePk]={
+          gamePk:g.gamePk,
+          date:hoyISO(),
+          away:g.teams?.away?.team?.name || "?",
+          home:g.teams?.home?.team?.name || "?",
+          venue:g.venue?.name || venueFull?.name || "SIN PARQUE",
+          venueId:venueId,
+          roof:venueFull?.roofType || venueFull?.roof || "",
+          lat:coords.lat,
+          lon:coords.lon,
+          ...clima
+        };
+      }
+
+      html+=cardJuegoHoy(g,climaHoy[g.gamePk]);
     }
+
+    render(html || "<div class='bad'>No hay juegos.</div>");
+    setEstado("Juegos de hoy cargados.");
   }catch(e){
-    estado.className = "err";
-    estado.textContent = "ERROR:\n" + e.message;
-  }finally{
-    btnHoy.disabled = false;
+    setEstado("Error jalando juegos de hoy: "+e.message);
   }
 }
 
-function renderJuego(g){
-  const away = g.teams?.away?.team?.name || "?";
-  const home = g.teams?.home?.team?.name || "?";
-  const venueName = g.venue?.name || "SIN ESTADIO";
-  const venueId = g.venue?.id || "SIN venueId";
-  const hora = g.gameDate ? new Date(g.gameDate).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}) : "SIN HORA";
-
-  const div = document.createElement("div");
-  div.className = "juego";
-  div.id = "juego-" + g.gamePk;
-  div.innerHTML =
-    '<div class="matchup">' + away + " @ " + home + '</div>' +
-    '<div class="estadio">' + venueName + '</div>' +
-    '<div class="meta">venueId: ' + venueId + " · " + hora + '</div>' +
-    '<div class="clima" id="clima-' + g.gamePk + '">Cargando clima…</div>' +
-    '<div class="match" id="match-' + g.gamePk + '"></div>';
-  lista.appendChild(div);
-}
-
-async function getCoords(venueId){
-  const vResp = await fetch(R.venueUrl(venueId));
-  if(!vResp.ok) throw new Error("venue HTTP " + vResp.status);
-  const vData = await vResp.json();
-  const venue = vData.venues && vData.venues[0] ? vData.venues[0] : null;
-  const coords = venue?.location?.defaultCoordinates;
-  if(!coords) throw new Error("SIN COORDENADAS");
-  return {lat: coords.latitude, lon: coords.longitude};
-}
-
-async function cargarClimaHoy(g){
-  const cont = document.getElementById("clima-" + g.gamePk);
+async function jalarHistorico2026(){
   try{
-    const venueId = g.venue?.id;
-    const coords = await getCoords(venueId);
-    const wResp = await fetch(R.weatherUrl(coords.lat, coords.lon));
-    if(!wResp.ok) throw new Error("weather HTTP " + wResp.status);
-    const wData = await wResp.json();
-    const c = wData.current;
+    setEstado("Jalando histórico 2026 desde marzo 26...");
+    render("<div class='small'>Procesando histórico. Puede tardar.</div>");
 
-    climaHoy[g.gamePk] = {
-      gamePk:g.gamePk,
-      venue:g.venue?.name || "",
-      venueId:venueId,
-      tempF:Number(c.temperature_2m),
-      humidity:Number(c.relative_humidity_2m),
-      precip:Number(c.precipitation),
-      windMph:Number(c.wind_speed_10m),
-      roof:g.venue?.roof || ""
-    };
+    let rows=[];
+    const end=ayerISO();
+    let d=START_HIST;
 
-    cont.innerHTML =
-      "Temp: " + c.temperature_2m + "°F<br>" +
-      "Humedad: " + c.relative_humidity_2m + "%<br>" +
-      "Precipitación: " + c.precipitation + "<br>" +
-      "Viento: " + c.wind_speed_10m + " mph";
-  }catch(e){
-    cont.innerHTML = '<span class="err">ERROR CLIMA: ' + e.message + '</span>';
-  }
-}
+    while(d<=end){
+      setEstado("Histórico: "+d+" · filas: "+rows.length);
 
-async function jalarHistorico(){
-  btnHist.disabled = true;
-  estado.className = "";
-  estado.textContent = "Jalando histórico desde " + fechaInicio + " hasta ayer…";
-
-  const fechas = diasEntre(fechaInicio, ayerISO());
-  const rows = [];
-  const venueCache = {};
-
-  try{
-    for(const fecha of fechas){
-      estado.textContent = "Histórico: " + fecha + " · guardados " + rows.length;
-      const sResp = await fetch(R.scheduleUrl(fecha));
-      if(!sResp.ok) continue;
-      const sData = await sResp.json();
-      const games = sData.dates?.[0]?.games || [];
+      let games=[];
+      try{
+        games=await scheduleByDate(d);
+      }catch(e){
+        d=addDays(d,1);
+        continue;
+      }
 
       for(const g of games){
-        if(g.status?.detailedState === "Postponed") continue;
-
-        const venueId = g.venue?.id;
-        const venueName = g.venue?.name || "";
-        if(!venueId || !venueName) continue;
-
-        if(!venueCache[venueId]){
-          try{
-            venueCache[venueId] = await getCoords(venueId);
-          }catch(e){
-            continue;
-          }
+        const status=String(g.status?.detailedState || "").toLowerCase();
+        if(status.includes("postponed") || status.includes("cancelled") || status.includes("canceled")){
+          continue;
         }
 
-        const coords = venueCache[venueId];
-        const wResp = await fetch(archiveWeatherUrl(coords.lat, coords.lon, fecha));
-        if(!wResp.ok) continue;
+        const venueId=g.venue?.id;
+        if(!venueId) continue;
 
-        const wData = await wResp.json();
-        const h = wData.hourly;
-        if(!h || !h.time || !h.time.length) continue;
+        let venueFull=null;
+        let coords=null;
 
-        const idx = Math.min(19, h.time.length - 1);
+        try{
+          venueFull=await getVenueFull(venueId);
+          coords=coordsFromVenue(venueFull);
+        }catch(e){
+          continue;
+        }
+
+        if(!coords) continue;
+
+        let clima=null;
+        try{
+          clima=await getClimaHistorico(coords.lat,coords.lon,d,g.gameDate);
+        }catch(e){
+          continue;
+        }
+
+        if(!clima) continue;
 
         rows.push({
-          date: fecha,
-          gamePk: g.gamePk,
-          home: g.teams?.home?.team?.name || "",
-          away: g.teams?.away?.team?.name || "",
-          venue: venueName,
-          venueId: venueId,
-          tempF: Number(h.temperature_2m[idx]),
-          humidity: Number(h.relative_humidity_2m[idx]),
-          precip: Number(h.precipitation[idx]),
-          windMph: Number(h.wind_speed_10m[idx]),
-          windDir: Number(h.wind_direction_10m[idx])
+          gamePk:g.gamePk,
+          date:d,
+          away:g.teams?.away?.team?.name || "?",
+          home:g.teams?.home?.team?.name || "?",
+          venue:g.venue?.name || venueFull?.name || "SIN PARQUE",
+          venueId:venueId,
+          roof:venueFull?.roofType || venueFull?.roof || "",
+          lat:coords.lat,
+          lon:coords.lon,
+          tempF:clima.tempF,
+          humidity:clima.humidity,
+          precip:clima.precip,
+          windMph:clima.windMph,
+          windDir:clima.windDir
         });
       }
 
-      historico2026 = rows;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+      d=addDays(d,1);
     }
 
-    historico2026 = rows;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
-    estado.textContent = "Histórico guardado: " + rows.length + " juegos.";
+    historico2026=rows;
+    guardarHistoricoCache(rows);
+
+    render(`
+      <div class="juego">
+        <div class="matchup">Histórico 2026 cargado</div>
+        <div class="meta">Filas: ${rows.length}</div>
+        <div class="meta">Desde: ${START_HIST}</div>
+        <div class="meta">Hasta: ${end}</div>
+      </div>
+    `);
+
+    setEstado("Histórico cargado: "+rows.length+" filas.");
   }catch(e){
-    estado.className = "err";
-    estado.textContent = "ERROR HISTÓRICO:\n" + e.message;
-  }finally{
-    btnHist.disabled = false;
+    setEstado("Error histórico: "+e.message);
   }
 }
 
-function scoreMatch(today, hist){
-  if(!today || !hist) return 0;
-  let score = 0;
+function scoreMatch(today,h){
+  let score=0;
 
-  if(today.venue === hist.venue) score += 35;
+  const tempDiff=Math.abs(Number(today.tempF)-Number(h.tempF));
+  const windDiff=Math.abs(Number(today.windMph)-Number(h.windMph));
+  const humDiff=Math.abs(Number(today.humidity)-Number(h.humidity));
+  const precipDiff=Math.abs(Number(today.precip)-Number(h.precip));
 
-  const tempDiff = Math.abs(today.tempF - hist.tempF);
-  const windDiff = Math.abs(today.windMph - hist.windMph);
-  const humDiff = Math.abs(today.humidity - hist.humidity);
-  const preDiff = Math.abs(today.precip - hist.precip);
+  score += Math.max(0,30-tempDiff);
+  score += Math.max(0,25-(windDiff*2));
+  score += Math.max(0,20-(humDiff/3));
+  score += Math.max(0,10-(precipDiff*10));
 
-  score += Math.max(0, 25 - tempDiff * 3);
-  score += Math.max(0, 20 - windDiff * 4);
-  score += Math.max(0, 15 - humDiff);
-  score += Math.max(0, 5 - preDiff * 5);
+  if(today.venue && h.venue && today.venue===h.venue) score+=15;
 
-  return Math.max(0, Math.min(100, Math.round(score)));
+  const td=Number(today.windDir);
+  const hd=Number(h.windDir);
+  if(Number.isFinite(td) && Number.isFinite(hd)){
+    let dd=Math.abs(td-hd);
+    if(dd>180) dd=360-dd;
+    score += Math.max(0,10-(dd/18));
+  }
+
+  return Math.max(0,Math.min(100,Math.round(score)));
 }
 
 function calcularCoincidencia(){
   if(!juegosHoy.length){
-    estado.textContent = "Primero toca JALAR JUEGOS DE HOY.";
+    setEstado("Primero jala juegos de hoy.");
     return;
   }
 
-  let hist = historico2026 && historico2026.length ? historico2026 : leerHistoricoCache();
+  let hist=historico2026.length ? historico2026 : leerHistoricoCache();
 
   if(!hist.length){
-    estado.textContent = "Primero toca JALAR HISTÓRICO 2026.";
+    setEstado("Primero toca JALAR HISTÓRICO 2026.");
     return;
   }
 
-  historico2026 = hist;
+  let html="";
 
-  juegosHoy.forEach(g => {
-    const box = document.getElementById("match-" + g.gamePk);
-    if(!box) return;
-
-    const today = climaHoy[g.gamePk];
+  for(const g of juegosHoy){
+    const today=climaHoy[g.gamePk];
+    const away=g.teams?.away?.team?.name || "?";
+    const home=g.teams?.home?.team?.name || "?";
+    const venue=g.venue?.name || "SIN PARQUE";
 
     if(!today){
-      box.innerHTML = '<span class="bad">SIN CLIMA DE HOY</span>';
-      return;
+      html+=`
+        <div class="juego">
+          <div class="matchup">${away} @ ${home}</div>
+          <div class="estadio">${venue}</div>
+          <div class="bad">SIN CLIMA DE HOY</div>
+        </div>
+      `;
+      continue;
     }
 
-    let ranked = hist
-      .map(x => ({...x, score: scoreMatch(today, x)}))
-      .sort((a,b) => b.score - a.score)
+    const ranked=hist
+      .map(x=>({...x,score:scoreMatch(today,x)}))
+      .sort((a,b)=>b.score-a.score)
       .slice(0,5);
 
-    const mismoParque = ranked.filter(x => x.venue === today.venue);
-    if(mismoParque.length){
-      ranked = mismoParque.concat(ranked.filter(x => x.venue !== today.venue)).slice(0,5);
+    const top=ranked[0];
+    const cls=top?.score>=80 ? "ok" : top?.score>=65 ? "mid" : "bad";
+
+    html+=`
+      <div class="juego">
+        <div class="matchup">${away} @ ${home}</div>
+        <div class="estadio">${venue}</div>
+        <div class="match">
+          Mejor coincidencia: <span class="${cls}">${top ? top.score : 0}%</span>
+        </div>
+        <div class="hist">
+          ${ranked.map(r=>`
+            <div class="small">
+              ${r.date} · ${r.away} @ ${r.home} · ${r.venue}
+              · ${safe(r.tempF)}°F
+              · viento ${safe(r.windMph)} mph
+              · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"}
+              · hum ${safe(r.humidity)}%
+              · score ${r.score}%
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  render(html);
+  setEstado("Coincidencia calculada.");
+}
+
+function escenaAbierta(today){
+  const roof=String(today?.roof || "").toLowerCase();
+
+  if(roof.includes("closed") || roof.includes("cerrado")) return "NO ABIERTA / ROOF CERRADO";
+  if(roof.includes("open") || roof.includes("abierto")) return "ABIERTA / ROOF ABIERTO";
+
+  const venue=String(today?.venue || "").toLowerCase();
+
+  const roofParks=[
+    "tropicana field",
+    "rogers centre",
+    "minute maid park",
+    "globe life field",
+    "loandepot park",
+    "american family field",
+    "chase field",
+    "t-mobile park"
+  ];
+
+  if(roofParks.some(x=>venue.includes(x))){
+    return "ROOF NO CONFIRMADO";
+  }
+
+  return "ABIERTA";
+}
+
+function tipoBrisa(today){
+  const mph=Number(today?.windMph || 0);
+  const dir=Number(today?.windDir);
+  const escena=escenaAbierta(today);
+
+  if(escena.includes("ROOF CERRADO")) return "ROOF CERRADO";
+  if(escena.includes("ROOF NO CONFIRMADO")) return "ROOF NO CONFIRMADO";
+
+  if(mph<4) return "MUERTA";
+
+  if(!Number.isFinite(dir)){
+    if(mph>=12) return "TURBULENTA / DIRECCIÓN NO CONFIRMADA";
+    if(mph>=7) return "ACTIVA / DIRECCIÓN NO CONFIRMADA";
+    return "MUERTA / DIRECCIÓN NO CONFIRMADA";
+  }
+
+  if(mph>=14) return "TURBULENTA";
+  if((dir>=45 && dir<=135) || (dir>=225 && dir<=315)) return "CRUZADA";
+  if(mph>=8) return "DIRECTA";
+  return "MUERTA";
+}
+
+function evaluarMercados(today,pct,histCount){
+  const mph=Number(today?.windMph || 0);
+  const temp=Number(today?.tempF || 0);
+  const hum=Number(today?.humidity || 0);
+  const precip=Number(today?.precip || 0);
+
+  const escena=escenaAbierta(today);
+  const brisa=tipoBrisa(today);
+
+  let carreras="NO COINCIDENCIA";
+  let f5="NO COINCIDENCIA";
+  let ponches="NO COINCIDENCIA";
+  let veredicto="PASAR / NO COINCIDENCIA";
+
+  const baseFuerte=pct>=80 && histCount>=3;
+  const baseMedia=pct>=65 && histCount>=3;
+
+  if(!baseMedia){
+    return {escena,brisa,carreras,f5,ponches,veredicto};
+  }
+
+  if(escena.includes("ROOF CERRADO")){
+    veredicto="MIRAR SOLO MOTOR PRINCIPAL, NO CLIMA";
+    return {escena,brisa,carreras,f5,ponches,veredicto};
+  }
+
+  if(escena.includes("ROOF NO CONFIRMADO")){
+    veredicto="NO FORZAR / ROOF NO CONFIRMADO";
+    return {escena,brisa,carreras,f5,ponches,veredicto};
+  }
+
+  const calor=temp>=78;
+  const frio=temp<=58;
+  const vientoFuerte=mph>=10;
+  const lluvia=precip>0.05;
+  const humedadAlta=hum>=70;
+
+  if(baseFuerte && calor && vientoFuerte && !lluvia){
+    carreras="OVER "+pct+"%";
+    f5="F5 OVER "+Math.max(65,pct-5)+"%";
+    ponches="NO COINCIDENCIA";
+    veredicto="MIRAR OVER / F5 OVER";
+    return {escena,brisa,carreras,f5,ponches,veredicto};
+  }
+
+  if(baseFuerte && frio && vientoFuerte){
+    carreras="UNDER "+pct+"%";
+    f5="F5 UNDER "+Math.max(65,pct-5)+"%";
+    ponches="FAVORABLE A K "+Math.max(60,pct-10)+"%";
+    veredicto="MIRAR UNDER / K";
+    return {escena,brisa,carreras,f5,ponches,veredicto};
+  }
+
+  if(baseFuerte && brisa==="MUERTA"){
+    if(humedadAlta){
+      carreras="OVER LEVE "+Math.max(60,pct-15)+"%";
+      veredicto="MIRAR TOTAL SOLO SI LÍNEA AYUDA";
+    }else{
+      veredicto="PASAR";
     }
+    return {escena,brisa,carreras,f5,ponches,veredicto};
+  }
 
-    if(!ranked.length){
-      box.innerHTML = '<span class="bad">SIN HISTÓRICO</span>';
-      return;
-    }
+  if(baseMedia){
+    veredicto="REVISAR / NO FORZAR";
+    return {escena,brisa,carreras,f5,ponches,veredicto};
+  }
 
-    const top = ranked[0];
-    const cls = top.score >= 80 ? "ok" : top.score >= 65 ? "mid" : "bad";
-    const sem = top.score >= 80 ? "🟢" : top.score >= 65 ? "🟡" : "🔴";
-
-    box.innerHTML =
-      '<div class="hist"><b class="' + cls + '">' + sem + " Coincidencia: " + top.score + "%</b></div>" +
-      ranked.map(r =>
-        '<div class="small">' +
-        r.date + " · " + r.away + " @ " + r.home +
-        " · " + r.venue +
-        " · " + r.tempF + "°F" +
-        " · viento " + r.windMph + " mph" +
-        " · hum " + r.humidity + "%" +
-        '</div>'
-      ).join("");
-  });
-
-  estado.textContent = "Coincidencia calculada.";
+  return {escena,brisa,carreras,f5,ponches,veredicto};
 }
 
 function generarConclusionCoincidencia(){
-  const cards = Array.from(document.querySelectorAll(".juego"));
-
-  if(!cards.length){
-    estado.textContent = "Primero jala juegos de hoy.";
+  if(!juegosHoy.length){
+    setEstado("Primero jala juegos de hoy.");
     return;
   }
 
-  const conclusiones = cards.map(card => {
-    const txt = card.textContent;
-    const matchup = card.querySelector(".matchup")?.textContent || "SIN JUEGO";
-    const estadio = card.querySelector(".estadio")?.textContent || "SIN PARQUE";
+  let hist=historico2026.length ? historico2026 : leerHistoricoCache();
 
-    const pctMatch = txt.match(/Coincidencia:\s*(\d+)%/i);
-    const pct = pctMatch ? Number(pctMatch[1]) : 0;
+  if(!hist.length){
+    setEstado("Primero toca JALAR HISTÓRICO 2026.");
+    return;
+  }
 
-    const vientoMatch = txt.match(/Viento:\s*([\d.]+)/i);
-    const viento = vientoMatch ? Number(vientoMatch[1]) : 0;
+  let html="";
 
-    let escena = "ABIERTA / NO CONFIRMADA";
-    let brisa = "NO COINCIDENCIA";
-    let carreras = "NO COINCIDENCIA";
-    let f5 = "NO COINCIDENCIA";
-    let ponches = "NO COINCIDENCIA";
-    let veredicto = "PASAR / NO COINCIDENCIA";
+  for(const g of juegosHoy){
+    const today=climaHoy[g.gamePk];
+    const away=g.teams?.away?.team?.name || "?";
+    const home=g.teams?.home?.team?.name || "?";
+    const matchup=away+" @ "+home;
+    const estadio=g.venue?.name || "SIN PARQUE";
 
-    if(pct >= 80){
-      if(viento >= 10){
-        brisa = "BRISA ACTIVA";
-        carreras = "OVER / COINCIDENCIA " + pct + "%";
-        f5 = "F5 OVER / COINCIDENCIA " + pct + "%";
-        veredicto = "MIRAR OVER / F5 OVER";
-      }else if(viento >= 6){
-        brisa = "BRISA MEDIA";
-        carreras = "COINCIDENCIA " + pct + "%";
-        veredicto = "MIRAR MERCADO PRINCIPAL";
-      }else{
-        brisa = "MUERTA";
-        carreras = "COINCIDENCIA " + pct + "%";
-        veredicto = "MIRAR SOLO SI LÍNEA AYUDA";
-      }
-    }else if(pct >= 60){
-      brisa = viento >= 6 ? "BRISA MEDIA" : "MUERTA";
-      carreras = "COINCIDENCIA MEDIA " + pct + "%";
-      veredicto = "REVISAR / NO FORZAR";
+    if(!today){
+      html+=`
+        <div class="juego">
+          <div class="matchup">${matchup}</div>
+          <div class="estadio">${estadio}</div>
+          <div class="bad"><b>NO COINCIDENCIA:</b> SIN CLIMA DE HOY</div>
+        </div>
+      `;
+      continue;
     }
 
-    return `
+    let ranked=hist
+      .map(x=>({...x,score:scoreMatch(today,x)}))
+      .sort((a,b)=>b.score-a.score)
+      .slice(0,5);
+
+    const mismoParque=ranked.filter(x=>x.venue===today.venue);
+
+    if(mismoParque.length){
+      ranked=mismoParque.concat(ranked.filter(x=>x.venue!==today.venue)).slice(0,5);
+    }
+
+    const top=ranked[0];
+    const pct=top ? Number(top.score || 0) : 0;
+    const histCount=ranked.filter(x=>Number(x.score || 0)>=65).length;
+    const ev=evaluarMercados(today,pct,histCount);
+    const cls=pct>=80 ? "ok" : pct>=65 ? "mid" : "bad";
+
+    html+=`
       <div class="juego">
         <div class="matchup">${matchup}</div>
         <div class="estadio">${estadio}</div>
-        <div class="meta"><b>Escena:</b> ${escena}</div>
-        <div class="meta"><b>Brisa:</b> ${brisa}</div>
-        <div class="meta"><b>Carreras:</b> ${carreras}</div>
-        <div class="meta"><b>F5:</b> ${f5}</div>
-        <div class="meta"><b>Ponches:</b> ${ponches}</div>
-        <div class="match"><b>Veredicto:</b> ${veredicto}</div>
+
+        <div class="meta"><b>Coincidencia:</b> <span class="${cls}">${pct}%</span></div>
+        <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares</div>
+
+        <div class="meta"><b>Escena:</b> ${ev.escena}</div>
+        <div class="meta"><b>Tipo de brisa:</b> ${ev.brisa}</div>
+
+        <div class="meta"><b>Carreras:</b> ${ev.carreras}</div>
+        <div class="meta"><b>F5:</b> ${ev.f5}</div>
+        <div class="meta"><b>Ponches:</b> ${ev.ponches}</div>
+
+        <div class="match"><b>Veredicto final:</b> ${ev.veredicto}</div>
+
+        <div class="hist">
+          ${ranked.map(r=>`
+            <div class="small">
+              ${r.date} · ${r.away} @ ${r.home} · ${r.venue}
+              · ${safe(r.tempF)}°F
+              · viento ${safe(r.windMph)} mph
+              · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"}
+              · hum ${safe(r.humidity)}%
+              · score ${r.score}%
+            </div>
+          `).join("")}
+        </div>
       </div>
     `;
-  }).join("");
+  }
 
-  lista.innerHTML = conclusiones;
-  estado.textContent = "Conclusión de coincidencia generada.";
+  render(html);
+  setEstado("Conclusión de coincidencia generada.");
 }
+
+window.addEventListener("load",()=>{
+  historico2026=leerHistoricoCache();
+  if(historico2026.length){
+    setEstado("Listo. Histórico en cache: "+historico2026.length+" filas.");
+  }
+});
 </script>
 </body>
 </html>
