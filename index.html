@@ -278,18 +278,24 @@ function scoreMatch(today, hist){
 }
 
 function calcularCoincidencia(){
-  const hist = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  
+let hist = [];
 
-  if(!juegosHoy.length){
-    estado.textContent = "Primero toca JALAR JUEGOS DE HOY.";
-    return;
+try{
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if(raw){
+    const parsed = JSON.parse(raw);
+    hist = Array.isArray(parsed) ? parsed : Object.values(parsed);
+    climaHoy = parsed;
   }
+}catch(e){
+  hist = [];
+}
 
-  if(!hist.length){
-    estado.textContent = "Primero toca JALAR HISTÓRICO 2026.";
-    return;
-  }
-
+if(!hist.length){
+  estado.textContent = "Primero toca JALAR HISTÓRICO 2026.";
+  return;
+}
   juegosHoy.forEach(g => {
     const box = document.getElementById("match-" + g.gamePk);
     const today = climaHoy[g.gamePk];
