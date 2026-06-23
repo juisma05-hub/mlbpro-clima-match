@@ -305,16 +305,23 @@ function calcularCoincidencia(){
   estado.textContent = "Coincidencia calculada.";
 }
 function generarConclusionCoincidencia(){
-  if(!juegosHoy || !juegosHoy.length){
-    estado.textContent = "Primero jala juegos de hoy.";
+  const cards = Array.from(document.querySelectorAll(".juego"));
+
+  if(!cards.length){
+    estado.textContent = "Primero calcula coincidencia.";
     return;
   }
 
-  lista.innerHTML = juegosHoy.map(g => {
-    const juego = `${g.away || ""} @ ${g.home || ""}`;
-    const parque = g.venue || "SIN DATOS";
-    const wind = Number(g.windMph || g.wind_mph || 0);
-    const dir = String(g.windDir || g.wind_direction || "").toLowerCase();
+  const conclusiones = cards.map(card => {
+    const txt = card.textContent;
+    const matchup = card.querySelector(".matchup")?.textContent || "SIN JUEGO";
+    const estadio = card.querySelector(".estadio")?.textContent || "SIN PARQUE";
+
+    const pctMatch = txt.match(/Coincidencia:\s*(\d+)%/i);
+    const pct = pctMatch ? Number(pctMatch[1]) : 0;
+
+    const vientoMatch = txt.match(/Viento:\s*([\d.]+)/i);
+    const viento = vientoMatch ? Number(vientoMatch[1]) : 0;
 
     let escena = "ABIERTA / NO CONFIRMADA";
     let brisa = "NO COINCIDENCIA";
@@ -323,29 +330,31 @@ function generarConclusionCoincidencia(){
     let ponches = "NO COINCIDENCIA";
     let veredicto = "PASAR / NO COINCIDENCIA";
 
-    if(!wind || wind < 5){
-      brisa = "MUERTA";
-    } else if(dir.includes("out") || dir.includes("to left") || dir.includes("to right") || dir.includes("to center")){
-      brisa = "DIRECTA OUT";
-      carreras = "OVER / SIN PORCENTAJE CONFIRMADO";
-      f5 = "F5 OVER / SIN PORCENTAJE CONFIRMADO";
-      veredicto = "MIRAR OVER";
-    } else if(dir.includes("in") || dir.includes("from left") || dir.includes("from right") || dir.includes("from center")){
-      brisa = "DIRECTA IN";
-      carreras = "UNDER / SIN PORCENTAJE CONFIRMADO";
-      f5 = "F5 UNDER / SIN PORCENTAJE CONFIRMADO";
-      ponches = "FAVORABLE K / SIN PORCENTAJE CONFIRMADO";
-      veredicto = "MIRAR UNDER / PONCHES";
-    } else if(dir.includes("left to right") || dir.includes("right to left") || dir.includes("cross")){
-      brisa = "CRUZADA";
-      ponches = "FAVORABLE K / SIN PORCENTAJE CONFIRMADO";
-      veredicto = "MIRAR PONCHES";
+    if(pct >= 80){
+      if(viento >= 10){
+        brisa = "BRISA ACTIVA";
+        carreras = `OVER / COINCIDENCIA ${pct}%`;
+        f5 = `F5 OVER / COINCIDENCIA ${pct}%`;
+        veredicto = "MIRAR OVER / F5 OVER";
+      } else if(viento >= 6){
+        brisa = "BRISA MEDIA";
+        carreras = `COINCIDENCIA ${pct}%`;
+        veredicto = "MIRAR MERCADO PRINCIPAL";
+      } else {
+        brisa = "MUERTA";
+        carreras = `COINCIDENCIA ${pct}%`;
+        veredicto = "MIRAR SOLO SI LÍNEA AYUDA";
+      }
+    } else if(pct >= 60){
+      brisa = viento >= 6 ? "BRISA MEDIA" : "MUERTA";
+      carreras = `COINCIDENCIA MEDIA ${pct}%`;
+      veredicto = "REVISAR / NO FORZAR";
     }
 
     return `
       <div class="juego">
-        <div class="matchup">${juego}</div>
-        <div class="estadio">${parque}</div>
+        <div class="matchup">${matchup}</div>
+        <div class="estadio">${estadio}</div>
         <div class="meta"><b>Escena:</b> ${escena}</div>
         <div class="meta"><b>Brisa:</b> ${brisa}</div>
         <div class="meta"><b>Carreras:</b> ${carreras}</div>
@@ -356,6 +365,7 @@ function generarConclusionCoincidencia(){
     `;
   }).join("");
 
+  lista.innerHTML = conclusiones;
   estado.textContent = "Conclusión de coincidencia generada.";
 }</script>
 </body>
