@@ -28,7 +28,7 @@ button:disabled{opacity:.5}
 <button id="btnHoy">JALAR JUEGOS DE HOY</button>
 <button id="btnHist">JALAR HISTÓRICO 2026</button>
 <button id="btnMatch">CALCULAR COINCIDENCIA</button>
-
+<button id="btnConclusion">CONCLUSIÓN DE COINCIDENCIA</button>
 <div id="estado"></div>
 <div id="lista"></div>
 
@@ -44,7 +44,7 @@ document.getElementById("fechaHoy").textContent = "Fecha: " + fechaHoy;
 const btnHoy = document.getElementById("btnHoy");
 const btnHist = document.getElementById("btnHist");
 const btnMatch = document.getElementById("btnMatch");
-const estado = document.getElementById("estado");
+const btnConclusion = document.getElementById("btnConclusion");const estado = document.getElementById("estado");
 const lista = document.getElementById("lista");
 
 let juegosHoy = [];
@@ -53,7 +53,7 @@ let climaHoy = {};
 btnHoy.addEventListener("click", jalarJuegosHoy);
 btnHist.addEventListener("click", jalarHistorico);
 btnMatch.addEventListener("click", calcularCoincidencia);
-
+btnConclusion.addEventListener("click", generarConclusionCoincidencia);
 function ayerISO(){
   const d = new Date();
   d.setDate(d.getDate() - 1);
@@ -304,6 +304,59 @@ function calcularCoincidencia(){
 
   estado.textContent = "Coincidencia calculada.";
 }
-</script>
+function generarConclusionCoincidencia(){
+  if(!juegosHoy || !juegosHoy.length){
+    estado.textContent = "Primero jala juegos de hoy.";
+    return;
+  }
+
+  lista.innerHTML = juegosHoy.map(g => {
+    const juego = `${g.away || ""} @ ${g.home || ""}`;
+    const parque = g.venue || "SIN DATOS";
+    const wind = Number(g.windMph || g.wind_mph || 0);
+    const dir = String(g.windDir || g.wind_direction || "").toLowerCase();
+
+    let escena = "ABIERTA / NO CONFIRMADA";
+    let brisa = "NO COINCIDENCIA";
+    let carreras = "NO COINCIDENCIA";
+    let f5 = "NO COINCIDENCIA";
+    let ponches = "NO COINCIDENCIA";
+    let veredicto = "PASAR / NO COINCIDENCIA";
+
+    if(!wind || wind < 5){
+      brisa = "MUERTA";
+    } else if(dir.includes("out") || dir.includes("to left") || dir.includes("to right") || dir.includes("to center")){
+      brisa = "DIRECTA OUT";
+      carreras = "OVER / SIN PORCENTAJE CONFIRMADO";
+      f5 = "F5 OVER / SIN PORCENTAJE CONFIRMADO";
+      veredicto = "MIRAR OVER";
+    } else if(dir.includes("in") || dir.includes("from left") || dir.includes("from right") || dir.includes("from center")){
+      brisa = "DIRECTA IN";
+      carreras = "UNDER / SIN PORCENTAJE CONFIRMADO";
+      f5 = "F5 UNDER / SIN PORCENTAJE CONFIRMADO";
+      ponches = "FAVORABLE K / SIN PORCENTAJE CONFIRMADO";
+      veredicto = "MIRAR UNDER / PONCHES";
+    } else if(dir.includes("left to right") || dir.includes("right to left") || dir.includes("cross")){
+      brisa = "CRUZADA";
+      ponches = "FAVORABLE K / SIN PORCENTAJE CONFIRMADO";
+      veredicto = "MIRAR PONCHES";
+    }
+
+    return `
+      <div class="juego">
+        <div class="matchup">${juego}</div>
+        <div class="estadio">${parque}</div>
+        <div class="meta"><b>Escena:</b> ${escena}</div>
+        <div class="meta"><b>Brisa:</b> ${brisa}</div>
+        <div class="meta"><b>Carreras:</b> ${carreras}</div>
+        <div class="meta"><b>F5:</b> ${f5}</div>
+        <div class="meta"><b>Ponches:</b> ${ponches}</div>
+        <div class="match"><b>Veredicto:</b> ${veredicto}</div>
+      </div>
+    `;
+  }).join("");
+
+  estado.textContent = "Conclusión de coincidencia generada.";
+}</script>
 </body>
 </html>
