@@ -49,13 +49,14 @@ const lista = document.getElementById("lista");
 
 let juegosHoy = [];
 let climaHoy = {};
+let historico2026 = [];
 let coincidenciasHTML = "";
 
 function cargarHistoricoCache(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
     if(!raw) return false;
-    climaHoy = JSON.parse(raw);
+    historico2026 = JSON.parse(raw);
     estado.textContent = "Histórico cargado desde cache.";
     return true;
   }catch(e){
@@ -65,7 +66,7 @@ function cargarHistoricoCache(){
 
 function guardarHistoricoCache(){
   try{
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(climaHoy));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(historico2026));
   }catch(e){
     estado.textContent = "Histórico cargado, pero no se pudo guardar cache.";
   }
@@ -286,7 +287,7 @@ try{
   if(raw){
     const parsed = JSON.parse(raw);
     hist = Array.isArray(parsed) ? parsed : Object.values(parsed);
-    climaHoy = parsed;
+    historico2026 = hist;
   }
 }catch(e){
   hist = [];
