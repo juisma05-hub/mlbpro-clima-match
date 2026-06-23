@@ -98,3 +98,54 @@
 
       lista.appendChild(div);
     }
+async function cargarClima(g) {
+  const cont = document.getElementById("clima-" + g.gamePk);
+  if (!cont) return;
+
+  const venueId = g.venue ? g.venue.id : null;
+
+  if (!venueId) {
+    cont.innerHTML = '<span class="clima-pend">SIN venueId</span>';
+    return;
+  }
+
+  try {
+    const vResp = await fetch(R.venueUrl(venueId));
+    if (!vResp.ok) {
+      throw new Error("venues HTTP " + vResp.status + " " + vResp.statusText);
+    }
+
+    const vData = await vResp.json();
+    const venue = vData.venues && vData.venues[0] ? vData.venues[0] : null;
+    const coords = venue && venue.location ? venue.location.defaultCoordinates : null;
+
+    if (!coords || coords.latitude == null || coords.longitude == null) {
+      cont.innerHTML = '<span class="clima-pend">SIN COORDENADAS</span>';
+      return;
+    }
+
+    const wResp = await fetch(R.weatherUrl(coords.latitude, coords.longitude));
+    if (!wResp.ok) {
+      throw new Error("open-meteo HTTP " + wResp.status + " " + wResp.statusText);
+    }
+
+    const wData = await wResp.json();
+    const c = wData.current;
+
+    if (!c) {
+      cont.innerHTML = '<span class="clima-pend">SIN CLIMA</span>';
+      return;
+    }
+
+    cont.innerHTML =
+      '<div class="clima-row">Temp: ' + c.temperature_2m + '°F</div>' +
+      '<div class="clima-row">Humedad: ' + c.relative_humidity_2m + '%</div>' +
+      '<div class="clima-row">Precipitación: ' + c.precipitation + '</div>' +
+      '<div class="clima-row">Viento: ' + c.wind_speed_10m + ' mph</div>';
+  } catch (e) {
+    cont.innerHTML = '<span class="err">ERROR REAL DE FETCH:\n' + e.message + '</span>';
+  }
+}
+</script>
+</body>
+</html>
