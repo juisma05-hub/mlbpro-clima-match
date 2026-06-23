@@ -29,6 +29,7 @@ button:disabled{opacity:.5}
 <button id="btnHist">JALAR HISTÓRICO 2026</button>
 <button id="btnMatch">CALCULAR COINCIDENCIA</button>
 <button id="btnConclusion">CONCLUSIÓN DE COINCIDENCIA</button>
+
 <div id="estado"></div>
 <div id="lista"></div>
 
@@ -44,41 +45,19 @@ document.getElementById("fechaHoy").textContent = "Fecha: " + fechaHoy;
 const btnHoy = document.getElementById("btnHoy");
 const btnHist = document.getElementById("btnHist");
 const btnMatch = document.getElementById("btnMatch");
-const btnConclusion = document.getElementById("btnConclusion");const estado = document.getElementById("estado");
+const btnConclusion = document.getElementById("btnConclusion");
+const estado = document.getElementById("estado");
 const lista = document.getElementById("lista");
 
 let juegosHoy = [];
 let climaHoy = {};
 let historico2026 = [];
-let coincidenciasHTML = "";
 
-function cargarHistoricoCache(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return false;
-    historico2026 = JSON.parse(raw);
-    estado.textContent = "Histórico cargado desde cache.";
-    return true;
-  }catch(e){
-    return false;
-  }
-}
-
-function guardarHistoricoCache(){
-  try{
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(historico2026));
-  }catch(e){
-    estado.textContent = "Histórico cargado, pero no se pudo guardar cache.";
-  }
-}
 btnHoy.addEventListener("click", jalarJuegosHoy);
-btnHist.addEventListener("click", async () => {
-  if(cargarHistoricoCache()) return;
-  await jalarHistorico();
-  guardarHistoricoCache();
-});
+btnHist.addEventListener("click", jalarHistoricoSeguro);
 btnMatch.addEventListener("click", calcularCoincidencia);
 btnConclusion.addEventListener("click", generarConclusionCoincidencia);
+
 function ayerISO(){
   const d = new Date();
   d.setDate(d.getDate() - 1);
@@ -106,6 +85,37 @@ function archiveWeatherUrl(lat, lon, date){
     "&temperature_unit=fahrenheit" +
     "&wind_speed_unit=mph" +
     "&timezone=auto";
+}
+
+function leerHistoricoCache(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return [];
+    const parsed = JSON.parse(raw);
+    const arr = Array.isArray(parsed) ? parsed : Object.values(parsed);
+    return arr;
+  }catch(e){
+    return [];
+  }
+}
+
+async function jalarHistoricoSeguro(){
+  const cache = leerHistoricoCache();
+
+  if(cache.length >= 1000){
+    historico2026 = cache;
+    estado.className = "";
+    estado.textContent = "Histórico cargado desde cache: " + cache.length + " juegos.";
+    return;
+  }
+
+  if(cache.length > 0 && cache.length < 1000){
+    localStorage.removeItem(STORAGE_KEY);
+    historico2026 = [];
+    estado.textContent = "Cache incompleto borrado. Cargando histórico completo…";
+  }
+
+  await jalarHistorico();
 }
 
 async function jalarJuegosHoy(){
@@ -175,6 +185,7 @@ async function cargarClimaHoy(g){
     if(!wResp.ok) throw new Error("weather HTTP " + wResp.status);
     const wData = await wResp.json();
     const c = wData.current;
+
     climaHoy[g.gamePk] = {
       gamePk:g.gamePk,
       venue:g.venue?.name || "",
@@ -185,6 +196,7 @@ async function cargarClimaHoy(g){
       windMph:Number(c.wind_speed_10m),
       roof:g.venue?.roof || ""
     };
+
     cont.innerHTML =
       "Temp: " + c.temperature_2m + "°F<br>" +
       "Humedad: " + c.relative_humidity_2m + "%<br>" +
@@ -214,18 +226,23 @@ async function jalarHistorico(){
 
       for(const g of games){
         if(g.status?.detailedState === "Postponed") continue;
+
         const venueId = g.venue?.id;
         const venueName = g.venue?.name || "";
         if(!venueId || !venueName) continue;
 
         if(!venueCache[venueId]){
-          try{ venueCache[venueId] = await getCoords(venueId); }
-          catch(e){ continue; }
+          try{
+            venueCache[venueId] = await getCoords(venueId);
+          }catch(e){
+            continue;
+          }
         }
 
         const coords = venueCache[venueId];
         const wResp = await fetch(archiveWeatherUrl(coords.lat, coords.lon, fecha));
         if(!wResp.ok) continue;
+
         const wData = await wResp.json();
         const h = wData.hourly;
         if(!h || !h.time || !h.time.length) continue;
@@ -247,9 +264,12 @@ async function jalarHistorico(){
         });
       }
 
+      historico2026 = rows;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
     }
 
+    historico2026 = rows;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
     estado.textContent = "Histórico guardado: " + rows.length + " juegos.";
   }catch(e){
     estado.className = "err";
@@ -279,27 +299,24 @@ function scoreMatch(today, hist){
 }
 
 function calcularCoincidencia(){
-  
-let hist = [];
-
-try{
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if(raw){
-    const parsed = JSON.parse(raw);
-    hist = Array.isArray(parsed) ? parsed : Object.values(parsed);
-    historico2026 = hist;
+  if(!juegosHoy.length){
+    estado.textContent = "Primero toca JALAR JUEGOS DE HOY.";
+    return;
   }
-}catch(e){
-  hist = [];
-}
 
-if(!hist.length){
-  estado.textContent = "Primero toca JALAR HISTÓRICO 2026.";
-  return;
-}
+  let hist = historico2026 && historico2026.length ? historico2026 : leerHistoricoCache();
+
+  if(!hist.length){
+    estado.textContent = "Primero toca JALAR HISTÓRICO 2026.";
+    return;
+  }
+
+  historico2026 = hist;
+
   juegosHoy.forEach(g => {
-    const box = document.getElementById("match-" + if(!box) return;
+    const box = document.getElementById("match-" + g.gamePk);
     if(!box) return;
+
     const today = climaHoy[g.gamePk];
 
     if(!today){
@@ -307,14 +324,18 @@ if(!hist.length){
       return;
     }
 
-    const ranked = hist
-      .filter(x => x.venue === today.venue)
+    let ranked = hist
       .map(x => ({...x, score: scoreMatch(today, x)}))
       .sort((a,b) => b.score - a.score)
-      .slice(0,3);
+      .slice(0,5);
+
+    const mismoParque = ranked.filter(x => x.venue === today.venue);
+    if(mismoParque.length){
+      ranked = mismoParque.concat(ranked.filter(x => x.venue !== today.venue)).slice(0,5);
+    }
 
     if(!ranked.length){
-      box.innerHTML = '<span class="bad">SIN HISTÓRICO MISMO ESTADIO</span>';
+      box.innerHTML = '<span class="bad">SIN HISTÓRICO</span>';
       return;
     }
 
@@ -327,6 +348,7 @@ if(!hist.length){
       ranked.map(r =>
         '<div class="small">' +
         r.date + " · " + r.away + " @ " + r.home +
+        " · " + r.venue +
         " · " + r.tempF + "°F" +
         " · viento " + r.windMph + " mph" +
         " · hum " + r.humidity + "%" +
@@ -336,11 +358,12 @@ if(!hist.length){
 
   estado.textContent = "Coincidencia calculada.";
 }
+
 function generarConclusionCoincidencia(){
   const cards = Array.from(document.querySelectorAll(".juego"));
 
   if(!cards.length){
-    estado.textContent = "Primero calcula coincidencia.";
+    estado.textContent = "Primero jala juegos de hoy.";
     return;
   }
 
@@ -365,21 +388,21 @@ function generarConclusionCoincidencia(){
     if(pct >= 80){
       if(viento >= 10){
         brisa = "BRISA ACTIVA";
-        carreras = `OVER / COINCIDENCIA ${pct}%`;
-        f5 = `F5 OVER / COINCIDENCIA ${pct}%`;
+        carreras = "OVER / COINCIDENCIA " + pct + "%";
+        f5 = "F5 OVER / COINCIDENCIA " + pct + "%";
         veredicto = "MIRAR OVER / F5 OVER";
-      } else if(viento >= 6){
+      }else if(viento >= 6){
         brisa = "BRISA MEDIA";
-        carreras = `COINCIDENCIA ${pct}%`;
+        carreras = "COINCIDENCIA " + pct + "%";
         veredicto = "MIRAR MERCADO PRINCIPAL";
-      } else {
+      }else{
         brisa = "MUERTA";
-        carreras = `COINCIDENCIA ${pct}%`;
+        carreras = "COINCIDENCIA " + pct + "%";
         veredicto = "MIRAR SOLO SI LÍNEA AYUDA";
       }
-    } else if(pct >= 60){
+    }else if(pct >= 60){
       brisa = viento >= 6 ? "BRISA MEDIA" : "MUERTA";
-      carreras = `COINCIDENCIA MEDIA ${pct}%`;
+      carreras = "COINCIDENCIA MEDIA " + pct + "%";
       veredicto = "REVISAR / NO FORZAR";
     }
 
@@ -399,6 +422,7 @@ function generarConclusionCoincidencia(){
 
   lista.innerHTML = conclusiones;
   estado.textContent = "Conclusión de coincidencia generada.";
-}</script>
+}
+</script>
 </body>
 </html>
