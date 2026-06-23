@@ -297,7 +297,8 @@ if(!hist.length){
   return;
 }
   juegosHoy.forEach(g => {
-    const box = document.getElementById("match-" + g.gamePk);
+    const box = document.getElementById("match-" + if(!box) return;
+    if(!box) return;
     const today = climaHoy[g.gamePk];
 
     if(!today){
