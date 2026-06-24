@@ -602,45 +602,71 @@ function generarConclusionCoincidencia(){
     const ev=evaluarMercados(today,pct,histCount);
     const cls=pct>=80 ? "ok" : pct>=65 ? "mid" : "bad";
 
-    html+=`
-      <div class="juego">
-        <div class="matchup">${matchup}</div>
-        <div class="estadio">${estadio}</div>
+  html+=`
+  <div class="juego">
+    <div class="matchup">${matchup}</div>
+    <div class="estadio">${estadio}</div>
 
-               <div class="meta"><b>Match clima/parque:</b> <span class="${cls}">${pct}%</span></div>
-        <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
+    <div class="meta"><b>Clima de hoy:</b></div>
+    <div class="meta">Temp: ${safe(today.tempF)}°F</div>
+    <div class="meta">Humedad: ${safe(today.humidity)}%</div>
+    <div class="meta">Precip: ${safe(today.precip)}%</div>
+    <div class="meta">Viento: ${safe(today.windMph)} mph</div>
+    <div class="meta">Dir viento: ${Number.isFinite(Number(today.windDir)) ? today.windDir+"°" : "SIN DATO"}
+      ${
+        Number.isFinite(Number(today.windDir))
+        ? (Number(today.windDir)>=45 && Number(today.windDir)<135 ? "➡️" :
+           Number(today.windDir)>=135 && Number(today.windDir)<225 ? "⬇️" :
+           Number(today.windDir)>=225 && Number(today.windDir)<315 ? "⬅️" : "⬆️")
+        : ""
+      }
+    </div>
 
-        ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
+    ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
 
-        <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
-        <div class="meta"><b>Nota:</b> match alto NO es pick automático</div>
+    <div class="match"><b>Coincidencia clima/parque:</b> <span class="${cls}">${pct}%</span></div>
+    <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
 
-                <div class="meta"><b>Señal apuesta:</b> ${ev.carreras || "NO CONFIRMADA"}</div>
+    <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
+    <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"} — ${
+      ev.carreras && ev.carreras.includes("OVER")
+      ? "hay señal histórica, revisar línea"
+      : "no hay patrón suficiente para jugar total"
+    }</div>
+    <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
+    <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"} — faltan pitcher/lineup/umpire/catcher</div>
 
-        <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"} — ${
-          ev.carreras && ev.carreras.includes("OVER")
-            ? "hay señal histórica, revisar línea antes de jugar"
-            : "no hay patrón suficiente para jugar total"
-        }</div>
-        <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
-        <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"} — faltan pitcher/lineup/umpire/catcher</div>
+    <div class="match"><b>Conclusión Data Madre:</b> ${
+      String(ev.veredicto || "NO USAR COMO PICK")
+        .replaceAll("ROOF NO CONFIRMADO", "TECHO " + (window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(estadio).label : "NO VERIFICADO"))
+    }</div>
 
-                <div class="match"><b>Veredicto final:</b> ${String(ev.veredicto || "NO USAR COMO PICK").replaceAll("ROOF NO CONFIRMADO", "TECHO " + (window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(estadio).label : "NO VERIFICADO"))}</div>
-
-        <div class="hist">
-          ${ranked.map(r=>`
-            <div class="small">
-              ${r.date} · ${r.away} @ ${r.home} · ${r.venue}
-              · ${safe(r.tempF)}°F
-              · viento ${safe(r.windMph)} mph
-              · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"}
-              · hum ${safe(r.humidity)}%
-              · score ${r.score}%
-            </div>
-          `).join("")}
+    <div class="hist">
+      <div class="meta"><b>Similares históricos:</b></div>
+      ${ranked.map(r=>`
+        <div class="small">
+          ${r.date} · ${r.away} @ ${r.home} · ${r.venue}
+          · ${safe(r.tempF)}°F
+          · viento ${safe(r.windMph)} mph
+          · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"}
+          ${
+            Number.isFinite(Number(r.windDir))
+            ? (Number(r.windDir)>=45 && Number(r.windDir)<135 ? "➡️" :
+               Number(r.windDir)>=135 && Number(r.windDir)<225 ? "⬇️" :
+               Number(r.windDir)>=225 && Number(r.windDir)<315 ? "⬅️" : "⬆️")
+            : ""
+          }
+          · hum ${safe(r.humidity)}%
+          · carreras ${r.totalRuns || r.total || r.runs || "SIN DATOS"}
+          · F5 ${r.f5 || r.f5Runs || "SIN DATOS"}
+          · K ${r.k || r.strikeouts || "SIN DATOS"}
+          · HR ${r.hr || r.homeruns || "SIN DATOS"}
+          · score ${r.score}%
         </div>
-      </div>
-    `;
+      `).join("")}
+    </div>
+  </div>
+`;
   }
 
   render(html);
