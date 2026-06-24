@@ -453,7 +453,7 @@ function escenaAbierta(today){
   ];
 
   if(roofParks.some(x=>venue.includes(x))){
-    return "ROOF NO CONFIRMADO";
+    return window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(today?.venue).label : "NO VERIFICADO";
   }
 
   return "ABIERTA";
@@ -508,7 +508,7 @@ function evaluarMercados(today,pct,histCount){
   }
 
   if(escena.includes("ROOF NO CONFIRMADO")){
-    veredicto="NO FORZAR / ROOF NO CONFIRMADO";
+    veredicto="NO FORZAR / TECHO " + (window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(today?.venue).label : "NO VERIFICADO");
     return {escena,brisa,carreras,f5,ponches,veredicto};
   }
 
