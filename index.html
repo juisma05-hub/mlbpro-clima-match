@@ -609,15 +609,14 @@ function generarConclusionCoincidencia(){
 
         <div class="meta"><b>Coincidencia:</b> <span class="${cls}">${pct}%</span></div>
         <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares</div>
-
-        <div class="meta"><b>Escena:</b> ${ev.escena}</div>
-        <div class="meta"><b>Tipo de brisa:</b> ${ev.brisa}</div>
+${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
+        
 
         <div class="meta"><b>Carreras:</b> ${ev.carreras}</div>
         <div class="meta"><b>F5:</b> ${ev.f5}</div>
         <div class="meta"><b>Ponches:</b> ${ev.ponches}</div>
 
-        <div class="match"><b>Veredicto final:</b> ${ev.veredicto}</div>
+        <div class="match"><b>Veredicto final:</b> ${window.MLBPRO_ROOF_STATUS ? String(ev.veredicto || "PASAR").replaceAll("ROOF NO CONFIRMADO", "TECHO " + window.MLBPRO_ROOF_STATUS.getRoofStatus(estadio).label) : ev.veredicto}</div>
 
         <div class="hist">
           ${ranked.map(r=>`
