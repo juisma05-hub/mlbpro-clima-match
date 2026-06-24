@@ -125,18 +125,41 @@ window.MLBPRO_GAME_CARDS = {
   },
 
   renderConclusion(verdict){
-    return `
-      <div class="section-label">CONCLUSIÓN</div>
-      <div class="short-row">
-        <div class="pill">Carreras: ${verdict?.carreras || "NO COINCIDENCIA"}</div>
-        <div class="pill">F5: ${verdict?.f5 || "NO COINCIDENCIA"}</div>
-        <div class="pill">Ponches: ${verdict?.ponches || "NO COINCIDENCIA"}</div>
-      </div>
-      <div class="verdict">
-        VEREDICTO: ${verdict?.final || "🔴 PASAR"}
-      </div>
-    `;
-  },
+  const carreras = verdict?.carreras || "SIN DATOS";
+  const f5 = verdict?.f5 || "SIN DATOS";
+  const ponches = verdict?.ponches || "SIN DATOS";
+  const final = verdict?.final || "NO USAR COMO PICK";
+
+  const motivoCarreras =
+    carreras.includes("OVER") || carreras.includes("UNDER")
+      ? "Hay señal histórica en los juegos similares."
+      : "No hay patrón histórico suficiente de carreras en los similares.";
+
+  return `
+    <div class="section-label">CONCLUSIÓN REAL</div>
+
+    <div class="explain-box">
+      <b>Qué mide:</b> Match clima/parque por temperatura, viento, dirección, humedad, estadio y techo.<br>
+      <b>Ojo:</b> Match alto NO es pick automático.
+    </div>
+
+    <div class="short-row">
+      <div class="pill">Carreras: ${carreras}</div>
+      <div class="pill">F5: ${f5}</div>
+      <div class="pill">Ponches: ${ponches}</div>
+    </div>
+
+    <div class="explain-box">
+      <b>Motivo carreras:</b> ${motivoCarreras}<br>
+      <b>F5:</b> ${f5.includes("NO") || f5 === "SIN DATOS" ? "No hay base suficiente para F5." : "Hay señal F5 en históricos."}<br>
+      <b>Ponches:</b> ${ponches.includes("NO") || ponches === "SIN DATOS" ? "Faltan pitcher/lineup/umpire/catcher." : "Hay señal de ponches."}
+    </div>
+
+    <div class="verdict">
+      VEREDICTO: ${final}
+    </div>
+  `;
+},
 
   renderGameCard(g, today, ranked, verdict){
     const names = this.getTeamNames(g);
