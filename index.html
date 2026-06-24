@@ -623,7 +623,7 @@ function generarConclusionCoincidencia(){
         <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
         <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"} — faltan pitcher/lineup/umpire/catcher</div>
 
-        <div class="match"><b>Veredicto final:</b> ${ev.veredicto || "NO USAR COMO PICK"}</div> 
+                <div class="match"><b>Veredicto final:</b> ${String(ev.veredicto || "NO USAR COMO PICK").replaceAll("ROOF NO CONFIRMADO", "TECHO " + (window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(estadio).label : "NO VERIFICADO"))}</div>
 
         <div class="hist">
           ${ranked.map(r=>`
