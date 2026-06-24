@@ -612,15 +612,7 @@ function generarConclusionCoincidencia(){
     <div class="meta">Humedad: ${safe(today.humidity)}%</div>
     <div class="meta">Precip: ${safe(today.precip)}%</div>
     <div class="meta">Viento: ${safe(today.windMph)} mph</div>
-    <div class="meta">Dir viento: ${Number.isFinite(Number(today.windDir)) ? today.windDir+"°" : "SIN DATO"}
-      ${
-        Number.isFinite(Number(today.windDir))
-        ? (Number(today.windDir)>=45 && Number(today.windDir)<135 ? "➡️" :
-           Number(today.windDir)>=135 && Number(today.windDir)<225 ? "⬇️" :
-           Number(today.windDir)>=225 && Number(today.windDir)<315 ? "⬅️" : "⬆️")
-        : ""
-      }
-    </div>
+   <div class="meta">Dir viento: ${Number.isFinite(Number(today.windDir)) ? today.windDir+"°" : "SIN DATO"}</div>
 
     ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
 
@@ -647,15 +639,7 @@ function generarConclusionCoincidencia(){
         <div class="small">
           ${r.date} · ${r.away} @ ${r.home} · ${r.venue}
           · ${safe(r.tempF)}°F
-          · viento ${safe(r.windMph)} mph
-          · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"}
-          ${
-            Number.isFinite(Number(r.windDir))
-            ? (Number(r.windDir)>=45 && Number(r.windDir)<135 ? "➡️" :
-               Number(r.windDir)>=135 && Number(r.windDir)<225 ? "⬇️" :
-               Number(r.windDir)>=225 && Number(r.windDir)<315 ? "⬅️" : "⬆️")
-            : ""
-          }
+          · viento ${safe(r.windMph)} · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"}
           · hum ${safe(r.humidity)}%
           · carreras ${r.totalRuns || r.total || r.runs || "SIN DATOS"}
           · F5 ${r.f5 || r.f5Runs || "SIN DATOS"}
