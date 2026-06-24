@@ -615,9 +615,11 @@ function generarConclusionCoincidencia(){
         <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
         <div class="meta"><b>Nota:</b> match alto NO es pick automático</div>
 
-        <div class="meta"><b>Carreras:</b> ${ev.carreras || "SIN DATOS"} — ${
+                <div class="meta"><b>Señal apuesta:</b> ${ev.carreras || "NO CONFIRMADA"}</div>
+
+        <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"} — ${
           ev.carreras && ev.carreras.includes("OVER")
-            ? "hay señal histórica, revisar línea"
+            ? "hay señal histórica, revisar línea antes de jugar"
             : "no hay patrón suficiente para jugar total"
         }</div>
         <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
