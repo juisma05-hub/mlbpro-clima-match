@@ -607,16 +607,23 @@ function generarConclusionCoincidencia(){
         <div class="matchup">${matchup}</div>
         <div class="estadio">${estadio}</div>
 
-        <div class="meta"><b>Coincidencia:</b> <span class="${cls}">${pct}%</span></div>
-        <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares</div>
-${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
-        
+               <div class="meta"><b>Match clima/parque:</b> <span class="${cls}">${pct}%</span></div>
+        <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
 
-        <div class="meta"><b>Carreras:</b> ${ev.carreras}</div>
-        <div class="meta"><b>F5:</b> ${ev.f5}</div>
-        <div class="meta"><b>Ponches:</b> ${ev.ponches}</div>
+        ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
 
-        <div class="match"><b>Veredicto final:</b> ${window.MLBPRO_ROOF_STATUS ? String(ev.veredicto || "PASAR").replaceAll("ROOF NO CONFIRMADO", "TECHO " + window.MLBPRO_ROOF_STATUS.getRoofStatus(estadio).label) : ev.veredicto}</div>
+        <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
+        <div class="meta"><b>Nota:</b> match alto NO es pick automático</div>
+
+        <div class="meta"><b>Carreras:</b> ${ev.carreras || "SIN DATOS"} — ${
+          ev.carreras && ev.carreras.includes("OVER")
+            ? "hay señal histórica, revisar línea"
+            : "no hay patrón suficiente para jugar total"
+        }</div>
+        <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
+        <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"} — faltan pitcher/lineup/umpire/catcher</div>
+
+        <div class="match"><b>Veredicto final:</b> ${ev.veredicto || "NO USAR COMO PICK"}</div> 
 
         <div class="hist">
           ${ranked.map(r=>`
