@@ -634,20 +634,20 @@ function generarConclusionCoincidencia(){
     }</div>
 
     <div class="hist">
-      <div class="meta"><b>Similares históricos:</b></div>
-      ${ranked.map(r=>`
-        <div class="small">
-          ${r.date} · ${r.away} @ ${r.home} · ${r.venue}
-          · ${safe(r.tempF)}°F
-          · viento ${safe(r.windMph)} · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"}
-          · hum ${safe(r.humidity)}%
-          · carreras ${r.totalRuns || r.total || r.runs || "SIN DATOS"}
-          · F5 ${r.f5 || r.f5Runs || "SIN DATOS"}
-          · K ${r.k || r.strikeouts || "SIN DATOS"}
-          · HR ${r.hr || r.homeruns || "SIN DATOS"}
-          · score ${r.score}%
-        </div>
-      `).join("")}
+      <div class="meta"><b>Similares históricos:</b></div>${ranked.map((r,i)=>`
+  ${ranked.map((r,i)=>`
+  <div class="small" style="padding:10px 0;border-bottom:1px solid #222;">
+    <div><b>${i+1}. ${r.date}</b></div>
+    <div><b>Juego:</b> ${r.away} @ ${r.home}</div>
+    <div><b>Parque:</b> ${r.venue}</div>
+    <div><b>Clima:</b> ${safe(r.tempF)}°F · viento ${safe(r.windMph)} mph · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"} · hum ${safe(r.humidity)}%</div>
+    <div><b>Carreras:</b> ${r.totalRuns || r.total || r.runs || "SIN DATOS"}</div>
+    <div><b>F5:</b> ${r.f5 || r.f5Runs || "SIN DATOS"}</div>
+    <div><b>Ponches:</b> ${r.k || r.strikeouts || "SIN DATOS"}</div>
+    <div><b>HR:</b> ${r.hr || r.homeruns || "SIN DATOS"}</div>
+    <div><b>Score similitud:</b> ${r.score}%</div>
+  </div>
+`).join("")}
     </div>
   </div>
 `;
