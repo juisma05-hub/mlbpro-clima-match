@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLBPro · Viento por Parque</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  background: #000;
+  color: #e8e8e8;
+  font-family: -apple-system, system-ui, sans-serif;
+  margin: 0;
+  padding: 16px;
+}
+h1 {
+  font-size: 18px;
+  color: #f5c518;
+  margin: 0 0 4px;
+  font-weight: 900;
+}
+.sub {
+  color: #888;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+button {
+  width: 100%;
+  padding: 15px;
+  margin: 6px 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: #000;
+  background: #f5c518;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+}
+button:active {
+  transform: scale(0.99);
+}
+#estado {
+  margin: 12px 0;
+  font-size: 13px;
+  color: #9ad;
+  font-weight: 700;
+}
+.parque-item {
+  background: #0c0c0c;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 14px;
+  margin: 10px 0;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.parque-item:hover {
+  border-color: #f5c518;
+  background: #151515;
+}
+.parque-nombre {
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 6px;
+}
+.parque-matchup {
+  font-size: 13px;
+  color: #bbb;
+  margin-bottom: 8px;
+}
+.parque-clima {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #999;
+}
+.parque-viento {
+  font-size: 16px;
+  color: #f5c518;
+  font-weight: 800;
+}
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.95);
+  z-index: 9999;
+  overflow-y: auto;
+  padding: 16px;
+  display: none;
+}
+.modal.open {
+  display: block;
+}
+.modal-content {
+  max-width: 600px;
+  margin: 0 auto;
+  background: #0c0c0c;
+  border: 1px solid #333;
+  border-radius: 16px;
+  padding: 20px;
+}
+.modal-header {
+  color: #f5c518;
+  font-size: 18px;
+  font-weight: 800;
+  margin: 0 0 10px;
+}
+.modal-subheader {
+  color: #888;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.modal-section {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.modal-section-title {
+  color: #f5c518;
+  font-size: 14px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+.wind-display {
+  color: #fff;
+  font-size: 24px;
+  font-weight: 900;
+  margin-bottom: 8px;
+}
+.wind-direction {
+  color: #ddd;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.wind-effect {
+  color: #9ad;
+  font-size: 13px;
+  margin-bottom: 8px;
+  font-weight: 800;
+}
+.wind-range {
+  color: #f5c518;
+  font-size: 13px;
+  font-weight: 800;
+}
+.historico-item {
+  padding: 10px 0;
+  border-bottom: 1px solid #222;
+  font-size: 12px;
+}
+.historico-date {
+  color: #fff;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+.historico-venue {
+  color: #ddd;
+  margin-bottom: 4px;
+}
+.historico-clima {
+  color: #ddd;
+  margin-bottom: 4px;
+}
+.historico-stats {
+  color: #ddd;
+  margin-bottom: 4px;
+}
+.historico-score {
+  color: #9ad;
+  font-weight: 800;
+}
+.sin-historicos {
+  color: #888;
+  font-size: 13px;
+  padding: 10px 0;
+}
+.close-btn {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 16px;
+  background: #333;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 800;
+}
+.close-btn:active {
+  transform: scale(0.99);
+}
+#lista {
+  min-height: 100px;
+}
+</style>
+</head>
+
+<body>
+<h1>MLBPro · Viento por Parque</h1>
+<div class="sub">Análisis de viento EN VIVO vs histórico 2026</div>
+
+<button onclick="jalarJuegosHoyViento()">JALAR JUEGOS HOY</button>
+
+<div id="estado">Listo.</div>
+<div id="lista"></div>
+
+<div id="modalViento" class="modal">
+  <div class="modal-content">
+    <button class="close-btn" onclick="cerrarModalViento()">CERRAR</button>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="parques-orientacion.js"></script>
+<script>
+
+const PROXY = "https://mlb-score-proxy.jip0512.workers.dev/?url=";
+const MLB_BASE = "https://statsapi.mlb.com/api/v1";
+const CACHE_HIST = "MLBPRO_DATA_MADRE_HIST_2026_V1";
+
+let juegosHoy = [];
+let climaHoy = {};
+let historico2026 = [];
+
+function viaProxy(url) {
+  return PROXY + encodeURIComponent(url);
+}
+
+function hoyISO() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
+
+function setEstado(t) {
+  document.getElementById("estado").textContent = t;
+}
+
+function render(html) {
+  document.getElementById("lista").innerHTML = html;
+}
+
+function safe(x) {
+  return Number.isFinite(Number(x)) ? Number(x) : "NO";
+}
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return await r.json();
+}
+
+async function scheduleByDate(dateISO) {
+  const url = viaProxy(`${MLB_BASE}/schedule?sportId=1&date=${dateISO}&hydrate=venue`);
+  const j = await fetchJSON(url);
+  return j.dates?.[0]?.games || [];
+}
+
+async function getVenueFull(venueId) {
+  const url = viaProxy(`${MLB_BASE}/venues/${venueId}?hydrate=location`);
+  const j = await fetchJSON(url);
+  return j.venues?.[0] || null;
+}
+
+function coordsFromVenue(v) {
+  const loc = v?.location || {};
+  const dc = loc.defaultCoordinates || {};
+  const lat = Number(dc.latitude ?? loc.latitude);
+  const lon = Number(dc.longitude ?? loc.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+  return null;
+}
+
+async function getClimaActual(lat, lon) {
+  const url =
+    "https://api.open-meteo.com/v1/forecast" +
+    `?latitude=${lat}&longitude=${lon}` +
+    "&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m" +
+    "&temperature_unit=fahrenheit&wind_speed_unit=mph";
+  const j = await fetchJSON(url);
+  const c = j.current || {};
+  return {
+    tempF: Number(c.temperature_2m),
+    humidity: Number(c.relative_humidity_2m),
+    precip: Number(c.precipitation),
+    windMph: Number(c.wind_speed_10m),
+    windDir: Number(c.wind_direction_10m)
+  };
+}
+
+function leerHistoricoCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_HIST);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function scoreMatch(today, h) {
+  let score = 0;
+
+  const tempDiff = Math.abs(Number(today.tempF) - Number(h.tempF));
+  const windDiff = Math.abs(Number(today.windMph) - Number(h.windMph));
+  const humDiff = Math.abs(Number(today.humidity) - Number(h.humidity));
+  const precipDiff = Math.abs(Number(today.precip) - Number(h.precip));
+
+  score += Math.max(0, 30 - tempDiff);
+  score += Math.max(0, 25 - (windDiff * 2));
+  score += Math.max(0, 20 - (humDiff / 3));
+  score += Math.max(0, 10 - (precipDiff * 10));
+
+  if (today.venue && h.venue && today.venue === h.venue) score += 15;
+
+  const td = Number(today.windDir);
+  const hd = Number(h.windDir);
+
+  if (Number.isFinite(td) && Number.isFinite(hd)) {
+    let dd = Math.abs(td - hd);
+    if (dd > 180) dd = 360 - dd;
+    score += Math.max(0, 10 - (dd / 18));
+
+    const hpACF = (typeof getOrientacionParque !== 'undefined')
+      ? getOrientacionParque(today.venue)
+      : 45;
+
+    const todayBearingDiff = Math.abs(((td - hpACF + 360) % 360) - 180);
+    const histBearingDiff = Math.abs(((hd - hpACF + 360) % 360) - 180);
+
+    if (Math.abs(todayBearingDiff - histBearingDiff) < 40) {
+      score += 5;
+    }
+  }
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function getRangoViento(windMph) {
+  const mph = Number(windMph || 0);
+  if (mph >= 16) return { rango: "16+", min: 16, max: 999 };
+  if (mph >= 13) return { rango: "13-16", min: 13, max: 16 };
+  if (mph >= 8) return { rango: "8-12", min: 8, max: 12 };
+  return { rango: "5-8", min: 5, max: 8 };
+}
+
+function evaluarVientoParque(game, venueName) {
+  const windDir = Number(game.windDir || 0);
+  const hpACF = (typeof getOrientacionParque !== 'undefined')
+    ? getOrientacionParque(venueName)
+    : 45;
+
+  if (!Number.isFinite(windDir)) return "DIRECCIÓN NO CONFIRMADA";
+
+  const bearingDiff = Math.abs(((windDir - hpACF + 360) % 360) - 180);
+
+  if (bearingDiff < 60) {
+    return "SALE AL JARDÍN (FAVOR BATEO)";
+  } else if (bearingDiff > 120) {
+    return "ENTRA A HOME (FAVOR PITCHEO)";
+  }
+  return "NEUTRAL / CRUZADA";
+}
+
+async function jalarJuegosHoyViento() {
+  try {
+    setEstado("Jalando juegos de hoy...");
+    render("");
+
+    const games = await scheduleByDate(hoyISO());
+    juegosHoy = games;
+    climaHoy = {};
+
+    let html = "";
+
+    for (const g of games) {
+      const venueId = g.venue?.id;
+      let venueFull = null;
+      let coords = null;
+
+      if (venueId) {
+        venueFull = await getVenueFull(venueId);
+        coords = coordsFromVenue(venueFull);
+      }
+
+      if (coords) {
+        const clima = await getClimaActual(coords.lat, coords.lon);
+        climaHoy[g.gamePk] = {
+          gamePk: g.gamePk,
+          date: hoyISO(),
+          away: g.teams?.away?.team?.name || "?",
+          home: g.teams?.home?.team?.name || "?",
+          venue: g.venue?.name || venueFull?.name || "SIN PARQUE",
+          venueId: venueId,
+          lat: coords.lat,
+          lon: coords.lon,
+          ...clima
+        };
+
+        const rango = getRangoViento(clima.windMph);
+        const efecto = evaluarVientoParque(climaHoy[g.gamePk], g.venue?.name || venueFull?.name || "");
+
+        html += `
+          <div class="parque-item" onclick="abrirModalViento(${g.gamePk}, '${(g.venue?.name || venueFull?.name || "SIN PARQUE").replace(/'/g, "\\'")}')">
+            <div class="parque-nombre">${g.venue?.name || venueFull?.name || "SIN PARQUE"}</div>
+            <div class="parque-matchup">${climaHoy[g.gamePk].away} @ ${climaHoy[g.gamePk].home}</div>
+            <div class="parque-clima">
+              <span>Temp: ${safe(clima.tempF)}°F</span>
+              <span>Hum: ${safe(clima.humidity)}%</span>
+              <span class="parque-viento">Viento: ${safe(clima.windMph)} mph (${rango.rango})</span>
+            </div>
+            <div class="parque-clima" style="color: #9ad; margin-top: 6px;">
+              ${efecto}
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    render(html || "<div style='color: #888;'>No hay juegos hoy.</div>");
+    setEstado("Juegos de hoy cargados: " + Object.keys(climaHoy).length);
+  } catch (e) {
+    setEstado("Error: " + e.message);
+  }
+}
+
+function abrirModalViento(gamePk, venueName) {
+  const game = climaHoy[gamePk];
+  if (!game) {
+    alert("Sin clima confirmado.");
+    return;
+  }
+
+  let hist = leerHistoricoCache();
+  if (!hist.length) {
+    alert("Sin histórico en cache. Jala primero desde index.html.");
+    return;
+  }
+
+  const windMph = Number(game.windMph || 0);
+  const rango = getRangoViento(windMph);
+  const windDir = Number(game.windDir || 0);
+  const efecto = evaluarVientoParque(game, venueName);
+
+  const similares = hist
+    .filter(h => {
+      const hwind = Number(h.windMph || 0);
+      return hwind >= rango.min && hwind <= rango.max;
+    })
+    .map(h => ({ ...h, score: scoreMatch(game, h) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+
+  let modalBody = `
+    <div class="modal-header">${venueName}</div>
+    <div class="modal-subheader">
+      ${game.away} @ ${game.home} · ${game.date}
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">VIENTO ACTUAL</div>
+      <div class="wind-display">${windMph.toFixed(1)} mph</div>
+      <div class="wind-direction">
+        Dirección: ${Number.isFinite(windDir) ? windDir + "°" : "SIN DATO"}
+      </div>
+      <div class="wind-effect">${efecto}</div>
+      <div class="wind-range">Rango: ${rango.rango} mph</div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">CLIMA ACTUAL</div>
+      <div style="font-size: 13px; color: #ddd;">
+        <div>Temperatura: ${safe(game.tempF)}°F</div>
+        <div>Humedad: ${safe(game.humidity)}%</div>
+        <div>Precipitación: ${safe(game.precip)}%</div>
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">HISTÓRICOS SIMILARES (${rango.rango} mph)</div>
+      ${similares.length ? similares.map((h, i) => `
+        <div class="historico-item">
+          <div class="historico-date">${i + 1}. ${h.date} · ${h.away} @ ${h.home}</div>
+          <div class="historico-venue">Parque: ${h.venue}</div>
+          <div class="historico-clima">
+            ${Number(h.tempF).toFixed(1)}°F · ${Number(h.windMph).toFixed(1)} mph (${Number(h.windDir || 0).toFixed(0)}°) · ${Number(h.humidity).toFixed(0)}% hum
+          </div>
+          <div class="historico-stats">
+            Carreras: ${Number(h.totalRuns || 0)} · Ponches: ${Number(h.totalKs || 0)} · HRs: ${Number(h.totalHRs || 0)}
+          </div>
+          <div class="historico-score">Similitud: ${h.score}%</div>
+        </div>
+      `).join("") : `<div class="sin-historicos">Sin históricos en este rango.</div>`}
+    </div>
+  `;
+
+  document.getElementById("modalBody").innerHTML = modalBody;
+  document.getElementById("modalViento").classList.add("open");
+}
+
+function cerrarModalViento() {
+  document.getElementById("modalViento").classList.remove("open");
+}
+
+window.addEventListener("load", () => {
+  historico2026 = leerHistoricoCache();
+  if (historico2026.length) {
+    setEstado("Listo. Histórico en cache: " + historico2026.length + " filas.");
+  }
+});
+
+</script>
+</body>
+</html>
