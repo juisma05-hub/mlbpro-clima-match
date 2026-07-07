@@ -274,12 +274,31 @@ async function jalarJuegosHoy(){
 
 async function jalarHistorico2026(){
   try{
-    setEstado("Jalando histórico 2026 desde marzo 26...");
-    render("<div class='small'>Procesando histórico. Puede tardar.</div>");
-
-    let rows=[];
+    let rows=leerHistoricoCache();
     const end=ayerISO();
+
     let d=START_HIST;
+    if(rows.length){
+      const fechas=rows.map(r=>r.date).filter(Boolean).sort();
+      const ultima=fechas[fechas.length-1];
+      d=addDays(ultima,1);
+    }
+
+    if(d>end){
+      historico2026=rows;
+      render(`
+        <div class="juego">
+          <div class="matchup">Histórico 2026 en caché</div>
+          <div class="meta">Filas: ${rows.length}</div>
+          <div class="meta">Ya está actualizado hasta: ${end}</div>
+        </div>
+      `);
+      setEstado("Listo. Histórico en cache: "+rows.length+" filas.");
+      return;
+    }
+
+    setEstado("Histórico: "+d+" · filas en caché: "+rows.length);
+    render("<div class='small'>Procesando histórico nuevo. Puede tardar.</div>");
 
     while(d<=end){
       setEstado("Histórico: "+d+" · filas: "+rows.length);
@@ -362,14 +381,14 @@ async function jalarHistorico2026(){
 
     render(`
       <div class="juego">
-        <div class="matchup">Histórico 2026 cargado</div>
-        <div class="meta">Filas: ${rows.length}</div>
+        <div class="matchup">Histórico 2026 actualizado</div>
+        <div class="meta">Filas totales: ${rows.length}</div>
         <div class="meta">Desde: ${START_HIST}</div>
         <div class="meta">Hasta: ${end}</div>
       </div>
     `);
 
-    setEstado("Histórico cargado: "+rows.length+" filas.");
+    setEstado("Histórico actualizado: "+rows.length+" filas.");
   }catch(e){
     setEstado("Error histórico: "+e.message);
   }
