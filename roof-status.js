@@ -8,11 +8,11 @@ window.MLBPRO_ROOF_STATUS = {
   roofParks: {
     "Rogers Centre": {
       type: "RETRACTABLE",
-      label: "ABIERTO",
-      verified: true,
-      confidence: 100,
-      climate: "ACTIVO",
-      note: "Techo abierto confirmado para 2026-06-23"
+      label: "NO VERIFICADO",
+      verified: false,
+      confidence: 10,
+      climate: "CASTIGADO",
+      note: "Techo retráctil pendiente de verificar"
     },
 
     "Tropicana Field": {
@@ -26,11 +26,11 @@ window.MLBPRO_ROOF_STATUS = {
 
     "loanDepot park": {
       type: "RETRACTABLE",
-      label: "CERRADO",
-      verified: true,
-      confidence: 100,
-      climate: "APAGADO",
-      note: "Techo cerrado confirmado para 2026-06-23"
+      label: "NO VERIFICADO",
+      verified: false,
+      confidence: 10,
+      climate: "CASTIGADO",
+      note: "Techo retráctil pendiente de verificar"
     },
 
     "Chase Field": {
