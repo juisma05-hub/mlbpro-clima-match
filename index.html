@@ -23,6 +23,7 @@ button:disabled{opacity:.5}
 .hist{margin-top:8px;border-top:1px solid #222;padding-top:8px}
 </style>
 <link rel="stylesheet" href="style.css">
+<script src="parques-orientacion.js"></script>
 </head>
 
 <body>
@@ -164,6 +165,26 @@ async function getClimaHistorico(lat,lon,dateISO,gameDate){
   };
 }
 
+async function getBoxScore(gamePk){
+  const url=viaProxy(`${MLB_BASE}/game/${gamePk}/boxscore`);
+  try{
+    const j=await fetchJSON(url);
+    const teams=j.teams || {};
+    const away=teams.away?.teamStats?.batting || {};
+    const home=teams.home?.teamStats?.batting || {};
+    return {
+      awayRuns:Number(away.runs),
+      homeRuns:Number(home.runs),
+      awayKs:Number(away.strikeOuts),
+      homeKs:Number(home.strikeOuts),
+      awayHRs:Number(away.homeRuns),
+      homeHRs:Number(home.homeRuns)
+    };
+  }catch(e){
+    return {awayRuns:0,homeRuns:0,awayKs:0,homeKs:0,awayHRs:0,homeHRs:0};
+  }
+}
+
 function guardarHistoricoCache(rows){
   try{
     localStorage.setItem(CACHE_HIST,JSON.stringify(rows));
@@ -301,6 +322,11 @@ async function jalarHistorico2026(){
 
         if(!clima) continue;
 
+        let box={awayRuns:0,homeRuns:0,awayKs:0,homeKs:0,awayHRs:0,homeHRs:0};
+        try{
+          box=await getBoxScore(g.gamePk);
+        }catch(e){}
+
         rows.push({
           gamePk:g.gamePk,
           date:d,
@@ -315,7 +341,16 @@ async function jalarHistorico2026(){
           humidity:clima.humidity,
           precip:clima.precip,
           windMph:clima.windMph,
-          windDir:clima.windDir
+          windDir:clima.windDir,
+          awayRuns:box.awayRuns,
+          homeRuns:box.homeRuns,
+          totalRuns:box.awayRuns+box.homeRuns,
+          awayKs:box.awayKs,
+          homeKs:box.homeKs,
+          totalKs:box.awayKs+box.homeKs,
+          awayHRs:box.awayHRs,
+          homeHRs:box.homeHRs,
+          totalHRs:box.awayHRs+box.homeHRs
         });
       }
 
@@ -348,19 +383,29 @@ function scoreMatch(today,h){
   const humDiff=Math.abs(Number(today.humidity)-Number(h.humidity));
   const precipDiff=Math.abs(Number(today.precip)-Number(h.precip));
 
-  score += Math.max(0,30-tempDiff);
-  score += Math.max(0,25-(windDiff*2));
-  score += Math.max(0,20-(humDiff/3));
-  score += Math.max(0,10-(precipDiff*10));
+  score+=Math.max(0,30-tempDiff);
+  score+=Math.max(0,25-(windDiff*2));
+  score+=Math.max(0,20-(humDiff/3));
+  score+=Math.max(0,10-(precipDiff*10));
 
   if(today.venue && h.venue && today.venue===h.venue) score+=15;
 
   const td=Number(today.windDir);
   const hd=Number(h.windDir);
+
   if(Number.isFinite(td) && Number.isFinite(hd)){
     let dd=Math.abs(td-hd);
     if(dd>180) dd=360-dd;
-    score += Math.max(0,10-(dd/18));
+    score+=Math.max(0,10-(dd/18));
+
+    const hpACF=(typeof getOrientacionParque!=='undefined')?getOrientacionParque(today.venue):45;
+
+    const todayBearingDiff=Math.abs(((td-hpACF+360)%360)-180);
+    const histBearingDiff=Math.abs(((hd-hpACF+360)%360)-180);
+
+    if(Math.abs(todayBearingDiff-histBearingDiff)<40){
+      score+=5;
+    }
   }
 
   return Math.max(0,Math.min(100,Math.round(score)));
@@ -421,6 +466,8 @@ function calcularCoincidencia(){
               · viento ${safe(r.windMph)} mph
               · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"}
               · hum ${safe(r.humidity)}%
+              · carreras ${safe(r.totalRuns)}
+              · ponches ${safe(r.totalKs)}
               · score ${r.score}%
             </div>
           `).join("")}
@@ -602,55 +649,53 @@ function generarConclusionCoincidencia(){
     const ev=evaluarMercados(today,pct,histCount);
     const cls=pct>=80 ? "ok" : pct>=65 ? "mid" : "bad";
 
-  html+=`
-  <div class="juego">
-    <div class="matchup">${matchup}</div>
-    <div class="estadio">${estadio}</div>
+    html+=`
+    <div class="juego">
+      <div class="matchup">${matchup}</div>
+      <div class="estadio">${estadio}</div>
 
-    <div class="meta"><b>Clima de hoy:</b></div>
-    <div class="meta">Temp: ${safe(today.tempF)}°F</div>
-    <div class="meta">Humedad: ${safe(today.humidity)}%</div>
-    <div class="meta">Precip: ${safe(today.precip)}%</div>
-    <div class="meta">Viento: ${safe(today.windMph)} mph</div>
-   <div class="meta">Dir viento: ${Number.isFinite(Number(today.windDir)) ? today.windDir+"°" : "SIN DATO"}</div>
+      <div class="meta"><b>Clima de hoy:</b></div>
+      <div class="meta">Temp: ${safe(today.tempF)}°F</div>
+      <div class="meta">Humedad: ${safe(today.humidity)}%</div>
+      <div class="meta">Precip: ${safe(today.precip)}%</div>
+      <div class="meta">Viento: ${safe(today.windMph)} mph</div>
+      <div class="meta">Dir viento: ${Number.isFinite(Number(today.windDir)) ? today.windDir+"°" : "SIN DATO"}</div>
 
-    ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
+      ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
 
-    <div class="match"><b>Coincidencia clima/parque:</b> <span class="${cls}">${pct}%</span></div>
-    <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
+      <div class="match"><b>Coincidencia clima/parque:</b> <span class="${cls}">${pct}%</span></div>
+      <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
 
-    <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
-    <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"} — ${
-      ev.carreras && ev.carreras.includes("OVER")
-      ? "hay señal histórica, revisar línea"
-      : "no hay patrón suficiente para jugar total"
-    }</div>
-    <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
-    <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"} — faltan pitcher/lineup/umpire/catcher</div>
+      <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
+      <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"} — ${
+        ev.carreras && ev.carreras.includes("OVER")
+        ? "hay señal histórica, revisar línea"
+        : "no hay patrón suficiente para jugar total"
+      }</div>
+      <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
+      <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"} — faltan pitcher/lineup/umpire/catcher</div>
 
-    <div class="match"><b>Conclusión Data Madre:</b> ${
-      String(ev.veredicto || "NO USAR COMO PICK")
-        .replaceAll("ROOF NO CONFIRMADO", "TECHO " + (window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(estadio).label : "NO VERIFICADO"))
-    }</div>
+      <div class="match"><b>Conclusión Data Madre:</b> ${
+        String(ev.veredicto || "NO USAR COMO PICK")
+          .replaceAll("ROOF NO CONFIRMADO", "TECHO " + (window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(estadio).label : "NO VERIFICADO"))
+      }</div>
 
-    <div class="hist">
-      <div class="meta"><b>Similares históricos:</b></div>${ranked.map((r,i)=>`
-  ${ranked.map((r,i)=>`
-  <div class="small" style="padding:10px 0;border-bottom:1px solid #222;">
-    <div><b>${i+1}. ${r.date}</b></div>
-    <div><b>Juego:</b> ${r.away} @ ${r.home}</div>
-    <div><b>Parque:</b> ${r.venue}</div>
-    <div><b>Clima:</b> ${safe(r.tempF)}°F · viento ${safe(r.windMph)} mph · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"} · hum ${safe(r.humidity)}%</div>
-    <div><b>Carreras:</b> ${r.totalRuns || r.total || r.runs || "SIN DATOS"}</div>
-    <div><b>F5:</b> ${r.f5 || r.f5Runs || "SIN DATOS"}</div>
-    <div><b>Ponches:</b> ${r.k || r.strikeouts || "SIN DATOS"}</div>
-    <div><b>HR:</b> ${r.hr || r.homeruns || "SIN DATOS"}</div>
-    <div><b>Score similitud:</b> ${r.score}%</div>
-  </div>
-`).join("")}
+      <div class="hist">
+        <div class="meta"><b>Similares históricos:</b></div>${ranked.map((r,i)=>`
+      <div class="small" style="padding:10px 0;border-bottom:1px solid #222;">
+        <div><b>${i+1}. ${r.date}</b></div>
+        <div><b>Juego:</b> ${r.away} @ ${r.home}</div>
+        <div><b>Parque:</b> ${r.venue}</div>
+        <div><b>Clima:</b> ${safe(r.tempF)}°F · viento ${safe(r.windMph)} mph · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir+"°" : "NO"} · hum ${safe(r.humidity)}%</div>
+        <div><b>Carreras:</b> ${safe(r.totalRuns)}</div>
+        <div><b>Ponches:</b> ${safe(r.totalKs)}</div>
+        <div><b>HRs:</b> ${safe(r.totalHRs)}</div>
+        <div><b>Score similitud:</b> ${r.score}%</div>
+      </div>
+    `).join("")}
+      </div>
     </div>
-  </div>
-`;
+  `;
   }
 
   render(html);
@@ -665,7 +710,6 @@ window.addEventListener("load",()=>{
 });
 </script>
 <script src="roof-status.js"></script>
-<script src="confidence-panel.js"></script>
 <script src="game-cards.js"></script>
 </body>
 </html>
