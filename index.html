@@ -251,6 +251,7 @@ async function jalarJuegosHoy(){
         climaHoy[g.gamePk]={
           gamePk:g.gamePk,
           date:hoyISO(),
+          gameDate:g.gameDate,
           away:g.teams?.away?.team?.name || "?",
           home:g.teams?.home?.team?.name || "?",
           venue:g.venue?.name || venueFull?.name || "SIN PARQUE",
@@ -474,6 +475,8 @@ function calcularCoincidencia(){
       <div class="juego">
         <div class="matchup">${away} @ ${home}</div>
         <div class="estadio">${venue}</div>
+        <div class="meta">Fecha: ${today.date || hoyISO()} · Hora: ${horaJuego(today.gameDate)}</div>
+        <div class="meta">Temp: ${safe(today.tempF)}°F · Humedad: ${safe(today.humidity)}% · Viento: ${safe(today.windMph)} mph · Dir: ${Number.isFinite(Number(today.windDir)) ? today.windDir+"°" : "SIN DATO"}</div>
         <div class="match">
           Mejor coincidencia: <span class="${cls}">${top ? top.score : 0}%</span>
         </div>
@@ -547,7 +550,7 @@ function tipoBrisa(today){
   return "MUERTA";
 }
 
-function evaluarMercados(today,pct,histCount){
+function evaluarMercados(today,pct,histCount,ranked){
   const mph=Number(today?.windMph || 0);
   const temp=Number(today?.tempF || 0);
   const hum=Number(today?.humidity || 0);
@@ -560,62 +563,161 @@ function evaluarMercados(today,pct,histCount){
   let f5="NO COINCIDENCIA";
   let ponches="NO COINCIDENCIA";
   let veredicto="PASAR / NO COINCIDENCIA";
+  let favorece="NO CONFIRMADO";
+  let promCarrerasHist=null;
+  let promPonchesHist=null;
+
+  const listaValida=Array.isArray(ranked) ? ranked.filter(x=>Number.isFinite(Number(x.totalRuns))) : [];
+  if(listaValida.length){
+    promCarrerasHist=listaValida.reduce((s,x)=>s+Number(x.totalRuns),0)/listaValida.length;
+  }
+  const listaPonches=Array.isArray(ranked) ? ranked.filter(x=>Number.isFinite(Number(x.totalKs))) : [];
+  if(listaPonches.length){
+    promPonchesHist=listaPonches.reduce((s,x)=>s+Number(x.totalKs),0)/listaPonches.length;
+  }
+
+  const hpACF=(typeof getOrientacionParque!=='undefined')?getOrientacionParque(today?.venue):null;
+  const esFavorableViento=vientoFavorable(today?.windDir, hpACF);
+
+  if(esFavorableViento===null){
+    favorece="NO CONFIRMADO / ORIENTACIÓN DE PARQUE SIN DATO";
+  }else if(esFavorableViento){
+    favorece="BATEO (viento empuja la bola)";
+  }else{
+    favorece="PICHEO (viento frena la bola)";
+  }
 
   const baseFuerte=pct>=80 && histCount>=3;
   const baseMedia=pct>=65 && histCount>=3;
 
   if(!baseMedia){
-    return {escena,brisa,carreras,f5,ponches,veredicto};
+    return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
   }
 
   if(escena.includes("ROOF CERRADO")){
     veredicto="MIRAR SOLO MOTOR PRINCIPAL, NO CLIMA";
-    return {escena,brisa,carreras,f5,ponches,veredicto};
+    return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
   }
 
   if(escena.includes("ROOF NO CONFIRMADO")){
     veredicto="NO FORZAR / TECHO " + (window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(today?.venue).label : "NO VERIFICADO");
-    return {escena,brisa,carreras,f5,ponches,veredicto};
+    return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
   }
 
-  const calor=temp>=78;
-  const frio=temp<=58;
-  const vientoFuerte=mph>=10;
-  const lluvia=precip>0.05;
-  const humedadAlta=hum>=70;
-
-  if(baseFuerte && calor && vientoFuerte && !lluvia){
-    carreras="OVER "+pct+"%";
-    f5="F5 OVER "+Math.max(65,pct-5)+"%";
-    ponches="NO COINCIDENCIA";
-    veredicto="MIRAR OVER / F5 OVER";
-    return {escena,brisa,carreras,f5,ponches,veredicto};
+  if(promCarrerasHist!==null){
+    carreras=promCarrerasHist.toFixed(1)+" carreras prom. ("+listaValida.length+" juego(s) similares)";
+  }
+  if(promPonchesHist!==null){
+    ponches=promPonchesHist.toFixed(1)+" ponches prom. ("+listaPonches.length+" juego(s) similares)";
   }
 
-  if(baseFuerte && frio && vientoFuerte){
-    carreras="UNDER "+pct+"%";
-    f5="F5 UNDER "+Math.max(65,pct-5)+"%";
-    ponches="FAVORABLE A K "+Math.max(60,pct-10)+"%";
-    veredicto="MIRAR UNDER / K";
-    return {escena,brisa,carreras,f5,ponches,veredicto};
+  if(baseFuerte && esFavorableViento===true){
+    veredicto="MIRAR OVER — viento favorece bateo, "+listaValida.length+" similares con "+(promCarrerasHist!==null?promCarrerasHist.toFixed(1):"?")+" carreras prom.";
+  }else if(baseFuerte && esFavorableViento===false){
+    veredicto="MIRAR UNDER / K — viento favorece picheo, "+listaValida.length+" similares con "+(promCarrerasHist!==null?promCarrerasHist.toFixed(1):"?")+" carreras prom.";
+  }else if(baseMedia){
+    veredicto="REVISAR / NO FORZAR — "+listaValida.length+" similares con "+(promCarrerasHist!==null?promCarrerasHist.toFixed(1):"?")+" carreras prom.";
   }
 
-  if(baseFuerte && brisa==="MUERTA"){
-    if(humedadAlta){
-      carreras="OVER LEVE "+Math.max(60,pct-15)+"%";
-      veredicto="MIRAR TOTAL SOLO SI LÍNEA AYUDA";
-    }else{
-      veredicto="PASAR";
-    }
-    return {escena,brisa,carreras,f5,ponches,veredicto};
-  }
+  return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
+}
 
-  if(baseMedia){
-    veredicto="REVISAR / NO FORZAR";
-    return {escena,brisa,carreras,f5,ponches,veredicto};
-  }
+function vientoFavorable(windDir, hpACF){
+  if(hpACF===null || hpACF===undefined || !Number.isFinite(Number(windDir))) return null;
+  const opuesto=(hpACF+180)%360;
+  let diff=Math.abs(Number(windDir)-opuesto);
+  if(diff>180) diff=360-diff;
+  return diff<=90;
+}
 
-  return {escena,brisa,carreras,f5,ponches,veredicto};
+function horaJuego(gameDateISO){
+  if(!gameDateISO) return "NO CONFIRMADA";
+  try{
+    const d=new Date(gameDateISO);
+    return d.toLocaleTimeString("es-US",{hour:"2-digit",minute:"2-digit",timeZone:"America/New_York"})+" ET";
+  }catch(e){
+    return "NO CONFIRMADA";
+  }
+}
+
+function renderBrujula(today, gamePk){
+  const hpACF = (typeof getOrientacionParque !== 'undefined')
+    ? getOrientacionParque(today?.venue)
+    : 45;
+
+  const windDir = Number(today?.windDir);
+  const tieneDir = Number.isFinite(windDir);
+  const id = "brujula_" + gamePk;
+
+  const puntos16 = [
+    {g:0,t:"N"},{g:22.5,t:"NNE"},{g:45,t:"NE"},{g:67.5,t:"ENE"},
+    {g:90,t:"E"},{g:112.5,t:"ESE"},{g:135,t:"SE"},{g:157.5,t:"SSE"},
+    {g:180,t:"S"},{g:202.5,t:"SSW"},{g:225,t:"SW"},{g:247.5,t:"WSW"},
+    {g:270,t:"W"},{g:292.5,t:"WNW"},{g:315,t:"NW"},{g:337.5,t:"NNW"}
+  ];
+
+  const cx=110, cy=110, r=95;
+  let marcas = "";
+  puntos16.forEach(p=>{
+    const gAjustado = ((p.g - hpACF)%360+360)%360;
+    const rad = gAjustado * Math.PI/180;
+    const esMayor = (p.g % 90 === 0);
+    const rTxt = r - (esMayor?16:12);
+    const x = cx + rTxt*Math.sin(rad), y = cy - rTxt*Math.cos(rad);
+    marcas += `<text x="${x}" y="${y+4}" fill="${esMayor?"#79c0ff":"#8b949e"}" font-size="${esMayor?13:9}" font-weight="${esMayor?800:600}" text-anchor="middle">${p.t}</text>`;
+    const p1x = cx + r*Math.sin(rad), p1y = cy - r*Math.cos(rad);
+    const p2x = cx + (r-6)*Math.sin(rad), p2y = cy - (r-6)*Math.cos(rad);
+    marcas += `<line x1="${p1x}" y1="${p1y}" x2="${p2x}" y2="${p2y}" stroke="${esMayor?"#e6edf3":"#484f58"}" stroke-width="${esMayor?2:1}"/>`;
+  });
+
+  const degAjustado = tieneDir ? ((windDir - hpACF)%360+360)%360 : 0;
+
+  const flechitas = tieneDir ? `
+    <g transform="rotate(${degAjustado} 110 110)" style="transform-origin:110px 110px">
+      <path class="fviento f1-${id}" d="M0,-4 L4,0 L0,4 L1.5,0 Z" fill="#58a6ff"/>
+      <path class="fviento f2-${id}" d="M0,-4 L4,0 L0,4 L1.5,0 Z" fill="#58a6ff"/>
+      <path class="fviento f3-${id}" d="M0,-4 L4,0 L0,4 L1.5,0 Z" fill="#58a6ff"/>
+      <path class="fviento f4-${id}" d="M0,-4 L4,0 L0,4 L1.5,0 Z" fill="#58a6ff"/>
+      <path class="fviento f5-${id}" d="M0,-4 L4,0 L0,4 L1.5,0 Z" fill="#58a6ff"/>
+    </g>
+  ` : "";
+
+  const animaciones = tieneDir ? `
+    <style>
+      .f1-${id}{ animation: viaje1-${id} 1.4s linear infinite; transform-box: fill-box; transform-origin: center; transform: rotate(90deg); }
+      .f2-${id}{ animation: viaje2-${id} 1.6s linear infinite; animation-delay:.3s; transform-box: fill-box; transform-origin: center; transform: rotate(90deg); }
+      .f3-${id}{ animation: viaje3-${id} 1.6s linear infinite; animation-delay:.6s; transform-box: fill-box; transform-origin: center; transform: rotate(90deg); }
+      .f4-${id}{ animation: viaje4-${id} 1.3s linear infinite; animation-delay:.15s; transform-box: fill-box; transform-origin: center; transform: rotate(90deg); }
+      .f5-${id}{ animation: viaje5-${id} 1.3s linear infinite; animation-delay:.45s; transform-box: fill-box; transform-origin: center; transform: rotate(90deg); }
+      @keyframes viaje1-${id}{ from{transform:translate(110px,152px) rotate(90deg);} to{transform:translate(110px,90px) rotate(90deg);} }
+      @keyframes viaje2-${id}{ from{transform:translate(102px,150px) rotate(90deg);} to{transform:translate(88px,96px) rotate(90deg);} }
+      @keyframes viaje3-${id}{ from{transform:translate(118px,150px) rotate(90deg);} to{transform:translate(132px,96px) rotate(90deg);} }
+      @keyframes viaje4-${id}{ from{transform:translate(96px,148px) rotate(90deg);} to{transform:translate(78px,108px) rotate(90deg);} }
+      @keyframes viaje5-${id}{ from{transform:translate(124px,148px) rotate(90deg);} to{transform:translate(142px,108px) rotate(90deg);} }
+    </style>
+  ` : "";
+
+  return `
+    <div class="match" style="text-align:center">
+      <div class="meta"><b>Brújula del parque</b></div>
+      ${animaciones}
+      <svg viewBox="0 0 220 220" style="width:150px;height:150px">
+        <circle cx="110" cy="110" r="95" fill="#0d1117" stroke="#30363d" stroke-width="2"/>
+        <g>${marcas}</g>
+        <g>
+          <path d="M 110,152 L 65,79 A 60,60 0 0 1 155,79 Z" fill="#1a4d2e" stroke="#2d7a4a" stroke-width="1" opacity="0.9"/>
+          <path d="M 89,152 Q 110,128 131,152" fill="none" stroke="#c9a94d" stroke-width="1" opacity="0.8"/>
+          <path d="M 83,152 Q 110,119 137,152" fill="none" stroke="#c9a94d" stroke-width="0.7" opacity="0.5"/>
+          <polygon points="110,110 128,131 110,152 92,131" stroke="#c9a94d" stroke-width="1.5" fill="none"/>
+        </g>
+        ${flechitas}
+        <circle cx="110" cy="110" r="4" fill="#e6edf3"/>
+      </svg>
+      <div class="small">
+        ${tieneDir ? `Viento de ${windDir}° hacia ${(windDir+180)%360}°` : "SIN DIRECCIÓN CONFIRMADA"}
+      </div>
+    </div>
+  `;
 }
 
 function generarConclusionCoincidencia(){
@@ -665,13 +767,14 @@ function generarConclusionCoincidencia(){
     const top=ranked[0];
     const pct=top ? Number(top.score || 0) : 0;
     const histCount=ranked.filter(x=>Number(x.score || 0)>=65).length;
-    const ev=evaluarMercados(today,pct,histCount);
+    const ev=evaluarMercados(today,pct,histCount,ranked);
     const cls=pct>=80 ? "ok" : pct>=65 ? "mid" : "bad";
 
     html+=`
     <div class="juego">
       <div class="matchup">${matchup}</div>
       <div class="estadio">${estadio}</div>
+      <div class="meta">Fecha: ${today.date || hoyISO()} · Hora: ${horaJuego(today.gameDate)}</div>
 
       <div class="meta"><b>Clima de hoy:</b></div>
       <div class="meta">Temp: ${safe(today.tempF)}°F</div>
@@ -682,17 +785,16 @@ function generarConclusionCoincidencia(){
 
       ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
 
+      ${renderBrujula(today, g.gamePk)}
+
       <div class="match"><b>Coincidencia clima/parque:</b> <span class="${cls}">${pct}%</span></div>
       <div class="meta"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
 
       <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
-      <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"} — ${
-        ev.carreras && ev.carreras.includes("OVER")
-        ? "hay señal histórica, revisar línea"
-        : "no hay patrón suficiente para jugar total"
-      }</div>
+      <div class="match"><b>Brisa favorece:</b> ${ev.favorece}</div>
+      <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"}</div>
       <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
-      <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"} — faltan pitcher/lineup/umpire/catcher</div>
+      <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"}</div>
 
       <div class="match"><b>Conclusión Data Madre:</b> ${
         String(ev.veredicto || "NO USAR COMO PICK")
