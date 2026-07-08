@@ -820,7 +820,7 @@ function generarConclusionCoincidencia(){
       ${renderBrujula(today, g.gamePk)}
 
       <details class="match" style="cursor:pointer">
-        <summary style="cursor:pointer;font-weight:800"><b>Coincidencia clima/parque:</b> <span class="${cls}">${pct}%</span></summary>
+        <summary style="cursor:pointer;font-weight:800"><b>Coincidencia clima/parque:</b> <span class="${cls}">${pct}%</span> · ${ev.carreras || "SIN DATOS"}</summary>
         <div class="meta" style="margin-top:8px"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
         <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
         <div class="meta"><b>Brisa favorece:</b> ${ev.favorece}</div>
