@@ -577,6 +577,13 @@ function evaluarMercados(today,pct,histCount,ranked){
     promPonchesHist=listaPonches.reduce((s,x)=>s+Number(x.totalKs),0)/listaPonches.length;
   }
 
+  if(promCarrerasHist!==null){
+    carreras=promCarrerasHist.toFixed(1)+" carreras prom. ("+listaValida.length+" juego(s) similares)";
+  }
+  if(promPonchesHist!==null){
+    ponches=promPonchesHist.toFixed(1)+" ponches prom. ("+listaPonches.length+" juego(s) similares)";
+  }
+
   const hpACF=(typeof getOrientacionParque!=='undefined')?getOrientacionParque(today?.venue):null;
   const esFavorableViento=vientoFavorable(today?.windDir, hpACF);
 
@@ -590,10 +597,7 @@ function evaluarMercados(today,pct,histCount,ranked){
 
   const baseFuerte=pct>=80 && histCount>=3;
   const baseMedia=pct>=65 && histCount>=3;
-
-  if(!baseMedia){
-    return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
-  }
+  const baseDatoReal = listaValida.length>=3;
 
   if(escena.includes("ROOF CERRADO")){
     veredicto="MIRAR SOLO MOTOR PRINCIPAL, NO CLIMA";
@@ -604,15 +608,6 @@ function evaluarMercados(today,pct,histCount,ranked){
     veredicto="NO FORZAR / TECHO " + (window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(today?.venue).label : "NO VERIFICADO");
     return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
   }
-
-  if(promCarrerasHist!==null){
-    carreras=promCarrerasHist.toFixed(1)+" carreras prom. ("+listaValida.length+" juego(s) similares)";
-  }
-  if(promPonchesHist!==null){
-    ponches=promPonchesHist.toFixed(1)+" ponches prom. ("+listaPonches.length+" juego(s) similares)";
-  }
-
-  const baseDatoReal = listaValida.length>=3;
 
   if(!baseDatoReal){
     veredicto="SIN DATO SUFICIENTE — solo "+listaValida.length+" similar(es) con carreras confirmadas";
@@ -625,6 +620,8 @@ function evaluarMercados(today,pct,histCount,ranked){
     veredicto="MIRAR UNDER / K — viento favorece picheo, "+listaValida.length+" similares con "+promCarrerasHist.toFixed(1)+" carreras prom.";
   }else if(baseMedia){
     veredicto="REVISAR / NO FORZAR — "+listaValida.length+" similares con "+promCarrerasHist.toFixed(1)+" carreras prom.";
+  }else{
+    veredicto="COINCIDENCIA BAJA — "+listaValida.length+" similares con "+promCarrerasHist.toFixed(1)+" carreras prom.";
   }
 
   return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
@@ -803,7 +800,7 @@ function generarConclusionCoincidencia(){
     const pct=top ? Number(top.score || 0) : 0;
     const histCount=ranked.filter(x=>Number(x.score || 0)>=65).length;
     const ev=evaluarMercados(today,pct,histCount,ranked);
-    const cls=pct>=80 ? "ok" : pct>=65 ? "mid" : "bad";
+    const cls=pct>=76 ? "ok" : pct>=65 ? "mid" : "bad";
 
     html+=`
     <div class="juego">
