@@ -218,7 +218,7 @@ function cardJuegoHoy(g,c){
         <div class="meta">Precip: ${safe(c.precip)}</div>
         <div class="meta">Viento: ${safe(c.windMph)} mph</div>
         <div class="meta">Dir viento: ${Number.isFinite(c.windDir)?c.windDir+"°":"NO CONFIRMADA"}</div>
-        <div class="meta">Roof: ${c.roof || "NO CONFIRMADO"}</div>
+        <div class="meta">Roof: ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(venue).label : (c.roof || "NO CONFIRMADO")}</div>
         ` : `<div class="bad">Clima no confirmado</div>`
       }
     </div>
