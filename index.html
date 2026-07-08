@@ -54,13 +54,15 @@ function viaProxy(url){
 
 function hoyISO(){
   const d=new Date();
-  return d.toISOString().slice(0,10);
+  const fmt=new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit"});
+  return fmt.format(d);
 }
 
 function ayerISO(){
   const d=new Date();
   d.setDate(d.getDate()-1);
-  return d.toISOString().slice(0,10);
+  const fmt=new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit"});
+  return fmt.format(d);
 }
 
 function addDays(dateISO,n){
@@ -469,7 +471,7 @@ function calcularCoincidencia(){
       .slice(0,5);
 
     const top=ranked[0];
-    const cls=top?.score>=80 ? "ok" : top?.score>=65 ? "mid" : "bad";
+    const cls=top?.score>=76 ? "ok" : top?.score>=65 ? "mid" : "bad";
 
     html+=`
       <div class="juego">
