@@ -612,12 +612,19 @@ function evaluarMercados(today,pct,histCount,ranked){
     ponches=promPonchesHist.toFixed(1)+" ponches prom. ("+listaPonches.length+" juego(s) similares)";
   }
 
+  const baseDatoReal = listaValida.length>=3;
+
+  if(!baseDatoReal){
+    veredicto="SIN DATO SUFICIENTE — solo "+listaValida.length+" similar(es) con carreras confirmadas";
+    return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
+  }
+
   if(baseFuerte && esFavorableViento===true){
-    veredicto="MIRAR OVER — viento favorece bateo, "+listaValida.length+" similares con "+(promCarrerasHist!==null?promCarrerasHist.toFixed(1):"?")+" carreras prom.";
+    veredicto="MIRAR OVER — viento favorece bateo, "+listaValida.length+" similares con "+promCarrerasHist.toFixed(1)+" carreras prom.";
   }else if(baseFuerte && esFavorableViento===false){
-    veredicto="MIRAR UNDER / K — viento favorece picheo, "+listaValida.length+" similares con "+(promCarrerasHist!==null?promCarrerasHist.toFixed(1):"?")+" carreras prom.";
+    veredicto="MIRAR UNDER / K — viento favorece picheo, "+listaValida.length+" similares con "+promCarrerasHist.toFixed(1)+" carreras prom.";
   }else if(baseMedia){
-    veredicto="REVISAR / NO FORZAR — "+listaValida.length+" similares con "+(promCarrerasHist!==null?promCarrerasHist.toFixed(1):"?")+" carreras prom.";
+    veredicto="REVISAR / NO FORZAR — "+listaValida.length+" similares con "+promCarrerasHist.toFixed(1)+" carreras prom.";
   }
 
   return {escena,brisa,carreras,f5,ponches,veredicto,favorece,promCarrerasHist,promPonchesHist};
@@ -671,7 +678,12 @@ function renderBrujula(today, gamePk){
     marcas += `<line x1="${p1x}" y1="${p1y}" x2="${p2x}" y2="${p2y}" stroke="${esMayor?"#e6edf3":"#484f58"}" stroke-width="${esMayor?2:1}"/>`;
   });
 
-  const degAjustado = tieneDir ? ((windDir - hpACF)%360+360)%360 : 0;
+  // windDir = de DONDE viene el viento. Las flechitas deben viajar HACIA
+  // donde va el viento, es decir windDir+180, ajustado a la orientación
+  // del parque (hpACF). Antes se usaba windDir crudo como dirección de
+  // movimiento, lo que hacía que las flechitas viajaran al revés.
+  const vaHacia = tieneDir ? (windDir + 180) % 360 : 0;
+  const degAjustado = tieneDir ? ((vaHacia - hpACF)%360+360)%360 : 0;
 
   // El abanico verde SIEMPRE apunta "arriba" (fijo, no rota) — mismo
   // diseño que el diamante. Para que las flechitas queden SIEMPRE dentro
