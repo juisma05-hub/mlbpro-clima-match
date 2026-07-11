@@ -1,12 +1,59 @@
-// parques-orientacion.js
+// ============================================================
+// PRÓLOGO — parques-orientacion.js
+// ============================================================
+// QUÉ ES:
+//   FUENTE ÚNICA del grado hpACF (Home Plate -> Centerfield) de cada
+//   parque MLB, es decir hacia dónde mira el campo. Es el dato base
+//   del que depende TODA la lógica de viento (mlbpro-viento.js) y la
+//   brújula visual (index.html: renderBrujula).
+//
+// DE QUÉ DEPENDE:
+//   De nada. Es standalone, debe cargar PRIMERO (antes que
+//   mlbpro-viento.js, roof-status.js, y cualquier script inline que
+//   llame a getOrientacionParque()).
+//
+// QUIÉN LO USA:
+//   mlbpro-viento.js (scoreMatch, tipoBrisa), index.html (renderBrujula,
+//   evaluarMercados), viento-parque.html (evaluarVientoParque).
+//
+// API GLOBAL (no está namespaced en un objeto, son globals directos):
+//   PARQUES_ORIENTACION → objeto {nombreParque: {hpACF, roof, confianza, fuente}}
+//     hpACF: number en grados, o null si "no_confirmado".
+//     confianza: "exacta" | "direccion" | "contradiccion" | "no_confirmado".
+//   PARQUES_ALIAS → objeto {nombreAlterno: nombreCanonico}. Nombres de
+//     patrocinio viejos, apodos, o nombres previos del mismo estadio.
+//
+//   getOrientacionParque(venue) → number en grados (0-360).
+//     Busca exacto → alias exacto → substring difuso → alias difuso.
+//     Devuelve 45 (valor neutro) si no encuentra nada o si el dato
+//     confirmado es null. NUNCA devuelve undefined/NaN.
+//   getInfoParque(venue) → objeto completo {hpACF,roof,confianza,fuente}
+//     o null si no se encuentra. Para mostrar detalle, no para cálculo.
+//
+// DATOS PENDIENTES (marcados "contradiccion", no inventados):
+//   Daikin Park, American Family Field, Sutter Health Park.
+//   Si el usuario manda coordenadas GPS nuevas de estos 3 (home plate
+//   + jardín central), recalcular hpACF y subir confianza a "exacta".
+//
+// QUÉ TOCA:
+//   Nada. Solo lectura de datos estáticos en memoria.
+// ============================================================
+//
 // Orientacion de los 30 parques MLB - grado hpACF (Home Plate -> Centerfield).
 // ACTUALIZADO 3 jul 2026 con mediciones GPS propias (3 puntos: jardin
 // central, segunda base, home plate) - reemplaza valores previos menos
 // precisos. Fuente de esta pasada: investigacion nueva con coordenadas.
 //
-// AVISO: Sutter Health Park cambia de 56 (consenso anterior, rechazando
-// Shadium) a 330 (fuente Shadium, "decision ya tomada" segun el nuevo
-// documento). Es un cambio de criterio respecto a la sesion anterior.
+// PENDIENTE DE DATO (no inventado, no confirmado todavia):
+//   - Daikin Park: contradiccion NNW/NW vs NE entre fuentes, sin resolver.
+//   - American Family Field: contradiccion SE vs NNW entre fuentes, sin resolver.
+//   - Sutter Health Park: salto de 56 (consenso previo) a 330 (Shadium),
+//     sin una segunda fuente que lo confirme.
+//   - Tropicana Field: sin fuente citable, pero tiene domo fijo cerrado
+//     (roof-status.js lo marca domeClosedFixed:true) asi que el viento
+//     exterior no se usa para ese parque de todas formas.
+// Si me pasas coordenadas GPS propias (home plate + jardin central) de
+// estos 4, los actualizo con confianza:"exacta" igual que el resto.
 //
 // confianza: "exacta" = medicion GPS propia o grado citado puntual
 // "direccion" = solo direccion cardinal, sin grado fino
@@ -46,15 +93,15 @@ var PARQUES_ORIENTACION = {
   },
   "Chase Field":              { hpACF: 23,  roof:"retractil", confianza:"exacta",    fuente:"theshadium.com" },
   "Sutter Health Park": {
-    hpACF: 330, roof:"abierto", confianza:"exacta",
-    fuente:"theshadium.com - CAMBIO DE CRITERIO: pasada anterior rechazaba este valor (outlier) y usaba 56 por consenso; este documento lo adopta como decision tomada"
+    hpACF: 330, roof:"abierto", confianza:"contradiccion",
+    fuente:"theshadium.com dice 330. Pasada anterior habia rechazado este valor como outlier y usaba 56 por consenso de otras fuentes. SIN SEGUNDA FUENTE QUE CONFIRME 330 - se marca contradiccion, no exacta, hasta tener una medicion GPS propia que decida."
   },
   "Globe Life Field":         { hpACF: 67.5, roof:"retractil", confianza:"direccion", fuente:"MLB.com/Rangers oficial - solo ENE, sin grado exacto" },
   "loanDepot park":           { hpACF: 135,  roof:"retractil", confianza:"direccion", fuente:"shadedseats.com - solo SE, sin grado exacto" },
   "Rogers Centre":            { hpACF: 0,    roof:"retractil", confianza:"direccion", fuente:"shadedseats.com - 'el bateador mira hacia el norte', sin grado exacto" },
   "Daikin Park": {
     hpACF: 20, roof:"retractil", confianza:"contradiccion",
-    fuente:"shadedseats.com y wherestheshade.com dicen NNW/NW; houstonticketbrokers.com dice home plate mira NE (jardin central SO) - SIN RESOLVER, valor previo mantenido"
+    fuente:"shadedseats.com y wherestheshade.com dicen NNW/NW; houstonticketbrokers.com dice home plate mira NE (jardin central SO) - SIN RESOLVER, valor previo mantenido. Nombre 2026 de Minute Maid Park."
   },
   "American Family Field": {
     hpACF: 330, roof:"retractil", confianza:"contradiccion",
@@ -62,7 +109,7 @@ var PARQUES_ORIENTACION = {
   },
   "Tropicana Field": {
     hpACF: null, roof:"domo_fijo", confianza:"no_confirmado",
-    fuente:"sin fuente citable de orientacion encontrada - domo fijo, se excluye del calculo de viento de todas formas"
+    fuente:"sin fuente citable de orientacion encontrada - domo fijo cerrado (ver roof-status.js domeClosedFixed:true), se excluye del calculo de viento de todas formas"
   }
 };
 
@@ -76,7 +123,8 @@ var PARQUES_ALIAS = {
   "Camden Yards": "Oriole Park at Camden Yards",
   "AT&T Park": "Oracle Park",
   "loanDepot Park": "loanDepot park",
-  "Raley Field": "Sutter Health Park"
+  "Raley Field": "Sutter Health Park",
+  "Minute Maid Park": "Daikin Park"
 };
 
 // Busca la orientacion (hpACF) de un parque por nombre de venue, con
