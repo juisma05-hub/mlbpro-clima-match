@@ -1,9 +1,55 @@
-/* MLBPro · Confidence Panel
-   Resumen de confianza arriba.
-   No depende del index pesado.
-*/
+/* ============================================================
+   PRÓLOGO — confidence-panel.js
+   ============================================================
+   QUÉ ES:
+     Panel resumen de "qué tan confiable está el día" (score 0-100),
+     con alertas manuales cargadas a mano por fecha. Se renderiza
+     arriba de la lista de juegos.
+
+   DE QUÉ DEPENDE:
+     mlbpro-core.js (para hoyISO(), evita recalcular fecha propia).
+     window.MLBPRO_ROOF_STATUS (para contar techos verificados/no).
+     Ambos deben estar cargados ANTES de llamar a summarize()/render().
+
+   QUIÉN LO USA:
+     index.html (generarConclusionCoincidencia la llama una vez y
+     pone el resultado arriba de las tarjetas de juegos).
+
+   ESTADO ACTUAL: CONECTADO.
+     Antes existía en el repo pero ningún <script src=""> lo cargaba
+     — era código muerto. Ahora sí está en el <script> de index.html
+     y sí se ejecuta.
+
+   API (window.MLBPRO_CONFIDENCE_PANEL):
+     manualAlerts20260623 → array hardcodeado de alertas de ejemplo
+       para esa fecha específica. Patrón: manualAlertsYYYYMMDD.
+       Para agregar alertas de un día nuevo: agregar otro array así
+       y un caso en getManualAlerts().
+
+     getDateKey() → string "YYYY-MM-DD" en ET, vía MLBPRO_CORE.hoyISO().
+     getManualAlerts() → array de alertas para hoy (vacío si no hay
+       ninguna cargada para la fecha de hoy).
+     summarize(games) → {total, score, status, cls, roofVerified,
+       roofBad, redCount, yellowCount, alerts}. games = array de
+       juegos crudos de MLB Stats API (con .venue.name).
+     render(games) → string HTML del panel completo.
+     renderAlerts(alerts) → string HTML de solo la sección de alertas.
+
+   QUÉ TOCA:
+     Nada de DOM directo ni localStorage — devuelve HTML como string,
+     quien lo llama (index.html) lo inserta.
+
+   PENDIENTE SI SE AGREGA MONEYLINE / K6:
+     El score de este panel es "confianza operativa del día" (clima +
+     techos + alertas manuales), NO tiene nada que ver con el score
+     de coincidencia climática (ese vive en mlbpro-viento.js). Si se
+     agrega MoneyLine, decidir si entra como otra resta al score de
+     ACÁ o si es un panel aparte — no mezclar los dos conceptos.
+   ============================================================ */
 
 window.MLBPRO_CONFIDENCE_PANEL = {
+  // Alertas manuales: cárgalas a mano para una fecha específica si
+  // querés que aparezcan en el panel ese día.
   manualAlerts20260623: [
     {
       level: "red",
@@ -35,22 +81,23 @@ window.MLBPRO_CONFIDENCE_PANEL = {
     }
   ],
 
-  getDateKey(){
-    const d = new Date();
-    return d.toISOString().slice(0,10);
+  getDateKey() {
+    // Antes: new Date().toISOString().slice(0,10) → UTC crudo, podía
+    // desfasarse un día respecto a la fecha real de MLB (ET).
+    return window.MLBPRO_CORE ? window.MLBPRO_CORE.hoyISO() : new Date().toISOString().slice(0, 10);
   },
 
-  summarize(games){
+  summarize(games) {
     const total = Array.isArray(games) ? games.length : 0;
 
     let roofVerified = 0;
     let roofBad = 0;
 
-    if(window.MLBPRO_ROOF_STATUS && Array.isArray(games)){
+    if (window.MLBPRO_ROOF_STATUS && Array.isArray(games)) {
       games.forEach(g => {
         const venue = g.venue?.name || g.venue || "";
         const r = window.MLBPRO_ROOF_STATUS.getRoofStatus(venue);
-        if(r.verified) roofVerified++;
+        if (r.verified) roofVerified++;
         else roofBad++;
       });
     }
@@ -60,65 +107,37 @@ window.MLBPRO_CONFIDENCE_PANEL = {
     const yellowCount = alerts.filter(a => a.level === "yellow").length;
 
     let score = 100;
-
     score -= redCount * 20;
     score -= yellowCount * 8;
     score -= roofBad * 6;
-
     score -= 10; // pitchers pendientes
     score -= 20; // lineups no confirmadas
     score -= 10; // umpires pendientes
-
     score = Math.max(0, Math.min(100, score));
 
     let status = "🟢 CONFIABLE";
     let cls = "ok";
+    if (score < 75) { status = "🟡 USAR CON CUIDADO"; cls = "mid"; }
+    if (score < 45) { status = "🔴 NO LISTO"; cls = "bad"; }
 
-    if(score < 75){
-      status = "🟡 USAR CON CUIDADO";
-      cls = "mid";
-    }
-
-    if(score < 45){
-      status = "🔴 NO LISTO";
-      cls = "bad";
-    }
-
-    return {
-      total,
-      score,
-      status,
-      cls,
-      roofVerified,
-      roofBad,
-      redCount,
-      yellowCount,
-      alerts
-    };
+    return { total, score, status, cls, roofVerified, roofBad, redCount, yellowCount, alerts };
   },
 
-  getManualAlerts(){
+  getManualAlerts() {
     const key = this.getDateKey();
-
-    if(key === "2026-06-23"){
-      return this.manualAlerts20260623;
-    }
-
+    if (key === "2026-06-23") return this.manualAlerts20260623;
     return [];
   },
 
-  render(games){
+  render(games) {
     const s = this.summarize(games);
-
     return `
       <div class="panel">
         <div class="panel-title">MLBPRO · ESTADO DEL DÍA</div>
-
         <div class="verdict">
           CONFIANZA GENERAL:
           <span class="${s.cls}">${s.score}% · ${s.status}</span>
         </div>
-
         <div class="conf-grid" style="margin-top:10px">
           <div class="conf-item">Juegos: ${s.total}</div>
           <div class="conf-item">Clima: ${s.redCount ? "🔴" : s.yellowCount ? "🟡" : "🟢"} ${s.redCount + s.yellowCount} alertas</div>
@@ -129,20 +148,18 @@ window.MLBPRO_CONFIDENCE_PANEL = {
           <div class="conf-item">Umpires: 🟡 por confirmar</div>
           <div class="conf-item">Histórico: 🟢 disponible</div>
         </div>
-
         ${this.renderAlerts(s.alerts)}
       </div>
     `;
   },
 
-  renderAlerts(alerts){
-    if(!alerts.length){
+  renderAlerts(alerts) {
+    if (!alerts.length) {
       return `
         <div class="section-label">ALERTAS DEL DÍA</div>
         <div class="alerta">🟢 Sin alertas manuales cargadas para esta fecha.</div>
       `;
     }
-
     return `
       <div class="section-label">ALERTAS DEL DÍA</div>
       ${alerts.map(a => `
