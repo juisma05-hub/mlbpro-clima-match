@@ -1,0 +1,145 @@
+/* ============================================================
+   PRÓLOGO — mlbpro-viento.js
+   ============================================================
+   QUÉ ES:
+     Fuente ÚNICA de: scoreMatch (similitud climática entre un juego
+     de hoy y uno del histórico), y toda la lógica de "de dónde viene
+     / hacia dónde va la brisa" y si favorece bateo o pitcheo.
+
+   DE QUÉ DEPENDE:
+     mlbpro-core.js (usa UMBRAL_OK/UMBRAL_MID indirectamente vía quien
+       lo llama, no los lee directo).
+     window.MLBPRO_ROOF_STATUS (roof-status.js) — para saber si el
+       parque tiene domo cerrado o techo no verificado antes de opinar
+       sobre viento.
+     getOrientacionParque() global (parques-orientacion.js) — para
+       saber hacia dónde mira cada parque (hpACF).
+     Los tres deben estar cargados ANTES de que se llamen estas
+     funciones (no antes de que se DEFINA el archivo — las llamadas a
+     esas dependencias están dentro de las funciones, se resuelven en
+     tiempo de ejecución, no de carga).
+
+   QUIÉN LO USA:
+     index.html, viento-parque.html.
+
+   CONVENCIÓN FÍSICA (confirmada con el usuario, NO cambiar sin decirle):
+     windDir = grado de DÓNDE VIENE el viento (estándar meteorológico,
+     así lo entrega Open-Meteo). Para saber hacia dónde VA, se suma 180°.
+     hpACF = grado hacia donde mira el campo, de home plate al jardín
+     central (viene de parques-orientacion.js).
+     Si el viento VIENE del lado opuesto a hpACF → VA hacia el jardín
+     central → saca la pelota → favorece BATEO.
+     Si el viento VIENE del mismo lado que hpACF (desde el jardín) →
+     VA hacia home → frena la pelota → favorece PICHEO.
+
+   API (window.MLBPRO_VIENTO):
+     scoreMatch(today, h) → number 0-100. today y h son objetos con
+       {tempF, windMph, humidity, precip, venue, windDir}. Compara
+       clima + parque + dirección de viento relativa al parque.
+
+     evaluarViento(windDir, hpACF) → {categoria, favoreceBateo, bearingDiff}
+       categoria: string para mostrar.
+       favoreceBateo: true | false | null (null = neutral/cruzado o sin dato).
+       Usado por evaluarMercados() en index.html para decidir OVER/UNDER.
+
+     tipoBrisa(today) → string. today = {venue, windMph, windDir}.
+       PRIMERO chequea roof-status.js (domo cerrado / techo no
+       verificado) antes de mirar el viento — ese orden importa, no
+       invertirlo. Devuelve: "ROOF CERRADO" | "ROOF NO CONFIRMADO" |
+       "MUERTA" | "TURBULENTA" | "CRUZADA" | "DIRECTA" | variantes
+       "/ DIRECCIÓN NO CONFIRMADA".
+
+   QUÉ TOCA:
+     Nada de DOM ni localStorage. Puras funciones de cálculo.
+   ============================================================ */
+
+window.MLBPRO_VIENTO = (function () {
+
+  function scoreMatch(today, h) {
+    let score = 0;
+
+    const tempDiff = Math.abs(Number(today.tempF) - Number(h.tempF));
+    const windDiff = Math.abs(Number(today.windMph) - Number(h.windMph));
+    const humDiff = Math.abs(Number(today.humidity) - Number(h.humidity));
+    const precipDiff = Math.abs(Number(today.precip) - Number(h.precip));
+
+    score += Math.max(0, 30 - tempDiff);
+    score += Math.max(0, 25 - (windDiff * 2));
+    score += Math.max(0, 20 - (humDiff / 3));
+    score += Math.max(0, 10 - (precipDiff * 10));
+
+    if (today.venue && h.venue && today.venue === h.venue) score += 15;
+
+    const td = Number(today.windDir);
+    const hd = Number(h.windDir);
+
+    if (Number.isFinite(td) && Number.isFinite(hd)) {
+      let dd = Math.abs(td - hd);
+      if (dd > 180) dd = 360 - dd;
+      score += Math.max(0, 10 - (dd / 18));
+
+      const hpACF = (typeof getOrientacionParque !== "undefined")
+        ? getOrientacionParque(today.venue)
+        : 45;
+
+      const todayBearingDiff = Math.abs(((td - hpACF + 360) % 360) - 180);
+      const histBearingDiff = Math.abs(((hd - hpACF + 360) % 360) - 180);
+
+      if (Math.abs(todayBearingDiff - histBearingDiff) < 40) score += 5;
+    }
+
+    return Math.max(0, Math.min(100, Math.round(score)));
+  }
+
+  // Devuelve la categoría del viento respecto al parque, y si favorece
+  // bateo (true), pitcheo (false), o es zona neutral/cruzada (null).
+  function evaluarViento(windDir, hpACFraw) {
+    const hpACF = Number.isFinite(Number(hpACFraw)) ? Number(hpACFraw) : 45;
+
+    if (!Number.isFinite(Number(windDir))) {
+      return { categoria: "DIRECCIÓN NO CONFIRMADA", favoreceBateo: null, bearingDiff: null };
+    }
+
+    const dir = Number(windDir);
+    const opuesto = (hpACF + 180) % 360;
+    let diff = Math.abs(dir - opuesto);
+    if (diff > 180) diff = 360 - diff;
+
+    if (diff <= 60) return { categoria: "SALE AL JARDÍN (FAVOR BATEO)", favoreceBateo: true, bearingDiff: diff };
+    if (diff >= 120) return { categoria: "ENTRA A HOME (FAVOR PICHEO)", favoreceBateo: false, bearingDiff: diff };
+    return { categoria: "NEUTRAL / CRUZADA", favoreceBateo: null, bearingDiff: diff };
+  }
+
+  // Clasificación de "tipo de brisa" para la tarjeta del juego de hoy.
+  // Ajustada a la orientación real del parque (antes no lo estaba: usaba
+  // grados de compás absolutos NE-SE/SW-NW sin importar hacia dónde
+  // miraba el estadio, y por eso podía contradecir a evaluarViento()).
+  function tipoBrisa(today) {
+    const mph = Number(today?.windMph || 0);
+    const dir = Number(today?.windDir);
+    const venue = today?.venue;
+
+    if (window.MLBPRO_ROOF_STATUS) {
+      if (window.MLBPRO_ROOF_STATUS.esDomoCerradoFijo(venue)) return "ROOF CERRADO";
+      if (window.MLBPRO_ROOF_STATUS.esTechoNoVerificado(venue)) return "ROOF NO CONFIRMADO";
+    }
+
+    if (mph < 4) return "MUERTA";
+
+    if (!Number.isFinite(dir)) {
+      if (mph >= 12) return "TURBULENTA / DIRECCIÓN NO CONFIRMADA";
+      if (mph >= 7) return "ACTIVA / DIRECCIÓN NO CONFIRMADA";
+      return "MUERTA / DIRECCIÓN NO CONFIRMADA";
+    }
+
+    if (mph >= 14) return "TURBULENTA";
+
+    const hpACF = (typeof getOrientacionParque !== "undefined") ? getOrientacionParque(venue) : 45;
+    const ev = evaluarViento(dir, hpACF);
+    if (ev.categoria === "NEUTRAL / CRUZADA") return "CRUZADA";
+    if (mph >= 8) return "DIRECTA";
+    return "MUERTA";
+  }
+
+  return { scoreMatch, evaluarViento, tipoBrisa };
+})();
