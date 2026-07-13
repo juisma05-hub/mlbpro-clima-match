@@ -55,10 +55,16 @@
 
      guardarHistoricoCache(rows) → void. Escribe en localStorage[CACHE_HIST].
      leerHistoricoCache() → Array. Lee de localStorage[CACHE_HIST].
+     borrarHistoricoCache() → boolean. Borra localStorage[CACHE_HIST].
+       Devuelve true si el borrado se ejecutó sin lanzar error, false
+       si no (quien llama debe respetar ese resultado, no asumir éxito).
 
    QUÉ TOCA:
-     localStorage, clave "MLBPRO_DATA_MADRE_HIST_2026_V1" (vía
-     guardarHistoricoCache/leerHistoricoCache). Nada de DOM.
+     localStorage, clave "MLBPRO_DATA_MADRE_HIST_2026_V1", y SOLO a
+     través de estas tres funciones: guardarHistoricoCache(),
+     leerHistoricoCache(), borrarHistoricoCache(). Ningún otro archivo
+     debe llamar a localStorage directo — si necesita leer, escribir o
+     borrar el histórico, pasa por acá. Nada de DOM.
    ============================================================ */
 
 window.MLBPRO_CORE = (function () {
@@ -257,11 +263,26 @@ window.MLBPRO_CORE = (function () {
     }
   }
 
+  // Único borrado real y confirmado del histórico. Antes no existía
+  // ninguna función expuesta para esto, así que index.html llamaba a
+  // localStorage.removeItem(CORE.CACHE_HIST) directo — rompiendo la
+  // regla de que localStorage solo se toca desde aquí. Devuelve
+  // true/false real (no asume éxito) para que quien llame no afirme
+  // "borrado" si el try/catch atrapó un error.
+  function borrarHistoricoCache() {
+    try {
+      localStorage.removeItem(CACHE_HIST);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   return {
     PROXY, MLB_BASE, CACHE_HIST, START_HIST, TZ, UMBRAL_OK, UMBRAL_MID,
     viaProxy, hoyISO, ayerISO, addDays, horaJuego, horaETNumero,
     fetchJSON, scheduleByDate, getVenueFull, coordsFromVenue,
     getClimaActual, getClimaHistorico, getBoxScore, esJuegoFinal,
-    guardarHistoricoCache, leerHistoricoCache
+    guardarHistoricoCache, leerHistoricoCache, borrarHistoricoCache
   };
 })();
