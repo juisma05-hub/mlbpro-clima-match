@@ -3,8 +3,26 @@
    ============================================================
    QUÉ ES:
      Panel resumen de "qué tan confiable está el día" (score 0-100),
-     con alertas manuales cargadas a mano por fecha. Se renderiza
-     arriba de la lista de juegos.
+     basado ÚNICAMENTE en lo que este archivo controla y verifica hoy:
+     alertas manuales cargadas por fecha y estado real de techos
+     (vía roof-status.js). Se renderiza arriba de la lista de juegos.
+
+   CORRECCIÓN ACTUAL (esta sesión):
+     summarize() restaba 40 puntos fijos por "pitchers pendientes"
+     (-10), "lineups no confirmadas" (-20) y "umpires pendientes"
+     (-10) SIEMPRE, sin comprobar ningún dato real de pitchers,
+     lineups ni umpires — este archivo nunca tuvo acceso a esa
+     información. Esas tres restas fijas se eliminaron: el score ahora
+     solo baja por alertas manuales reales (rojo/amarillo) y por
+     techos no verificados (roofBad), que sí son datos que este
+     archivo efectivamente calcula. También se quitaron del HTML las
+     tres filas fijas "Pitchers: 🟡 por confirmar", "Lineups: 🔴 no
+     confirmadas" y "Umpires: 🟡 por confirmar", y la fila "Histórico:
+     🟢 disponible" — ninguna de las cuatro tenía verificación real
+     detrás: este archivo no comprueba pitchers, lineups, umpires ni
+     el estado del histórico (eso vive en mlbpro-core.js /
+     leerHistoricoCache(), no acá). Este panel solo debe mostrar y
+     puntuar lo que efectivamente mide: alertas manuales y techos.
 
    DE QUÉ DEPENDE:
      mlbpro-core.js (para hoyISO(), evita recalcular fecha propia).
@@ -45,6 +63,15 @@
      de coincidencia climática (ese vive en mlbpro-viento.js). Si se
      agrega MoneyLine, decidir si entra como otra resta al score de
      ACÁ o si es un panel aparte — no mezclar los dos conceptos.
+
+   FECHA:
+     13 jul 2026.
+
+   ESTADO:
+     NO_CONFIRMADO — corrección aplicada por lectura de código.
+     Pendiente de prueba real que confirme que el score ya no baja 40
+     puntos fijos sin motivo, y que las filas de Pitchers/Lineups/
+     Umpires/Histórico ya no aparecen en el panel renderizado.
    ============================================================ */
 
 window.MLBPRO_CONFIDENCE_PANEL = {
@@ -110,9 +137,6 @@ window.MLBPRO_CONFIDENCE_PANEL = {
     score -= redCount * 20;
     score -= yellowCount * 8;
     score -= roofBad * 6;
-    score -= 10; // pitchers pendientes
-    score -= 20; // lineups no confirmadas
-    score -= 10; // umpires pendientes
     score = Math.max(0, Math.min(100, score));
 
     let status = "🟢 CONFIABLE";
@@ -143,10 +167,6 @@ window.MLBPRO_CONFIDENCE_PANEL = {
           <div class="conf-item">Clima: ${s.redCount ? "🔴" : s.yellowCount ? "🟡" : "🟢"} ${s.redCount + s.yellowCount} alertas</div>
           <div class="conf-item">Techos: ${s.roofBad ? "🟡" : "🟢"} ${s.roofVerified} verificados</div>
           <div class="conf-item">Delay: ${s.redCount ? "🔴 riesgo fuerte" : "🟢 sin rojo"}</div>
-          <div class="conf-item">Pitchers: 🟡 por confirmar</div>
-          <div class="conf-item">Lineups: 🔴 no confirmadas</div>
-          <div class="conf-item">Umpires: 🟡 por confirmar</div>
-          <div class="conf-item">Histórico: 🟢 disponible</div>
         </div>
         ${this.renderAlerts(s.alerts)}
       </div>
