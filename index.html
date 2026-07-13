@@ -37,6 +37,7 @@ button:disabled{opacity:.5}
 <div id="estado">Listo.</div>
 <div id="lista"></div>
 
+<script src="estadios.js"></script>
 <script src="parques-orientacion.js"></script>
 <script src="mlbpro-core.js"></script>
 <script src="roof-status.js"></script>
@@ -52,18 +53,29 @@ button:disabled{opacity:.5}
    QUÉ ES:
      Pantalla principal. Jala juegos de hoy + clima, construye/lee el
      histórico 2026, calcula coincidencia climática, y arma la
-     conclusión con veredicto de mercados (carreras/F5/ponches) y la
+     conclusión con veredicto de mercados (carreras/ponches) y la
      brújula visual de viento por parque.
 
+   QUÉ NO HACE (alcance actual, a propósito):
+     No calcula ni muestra F5, MoneyLine ni K6. Esta pantalla queda
+     limitada a: clima, orientación del parque, carreras, ponches e
+     histórico. Cualquier otro motor de mercado vive en sus propios
+     archivos/pantallas (fuera de index.html).
+
    ORDEN DE CARGA (no cambiar, cada uno depende del anterior):
-     1. parques-orientacion.js   (getOrientacionParque global)
-     2. mlbpro-core.js           (window.MLBPRO_CORE)
-     3. roof-status.js           (window.MLBPRO_ROOF_STATUS)
-     4. mlbpro-viento.js         (window.MLBPRO_VIENTO — usa 1 y 3)
-     5. confidence-panel.js      (window.MLBPRO_CONFIDENCE_PANEL — usa 2 y 3)
-     6. game-cards.js            (window.MLBPRO_GAME_CARDS — cargado, NO invocado)
-     7. mlb-climate-match.js     (window.MLBClimateRoutes — shim, NO invocado)
-     8. este script inline
+     1. estadios.js               (stadiumNorm(), stadiumCanonName()
+                                    globales — comparación canónica de
+                                    parques)
+     2. parques-orientacion.js    (getOrientacionParque global)
+     3. mlbpro-core.js            (window.MLBPRO_CORE)
+     4. roof-status.js            (window.MLBPRO_ROOF_STATUS)
+     5. mlbpro-viento.js          (window.MLBPRO_VIENTO — usa 1, 2 y 4)
+     6. confidence-panel.js       (window.MLBPRO_CONFIDENCE_PANEL — usa 3 y 4)
+     7. game-cards.js             (window.MLBPRO_GAME_CARDS — cargado, NO invocado)
+     8. mlb-climate-match.js      (window.MLBClimateRoutes — shim, NO invocado)
+     9. este script inline        (usa 1 directo para comparar venue en
+                                    generarConclusionCoincidencia, y usa
+                                    2 y 4 directo en renderBrujula/evaluarMercados)
 
    ESTADO GLOBAL (vive solo mientras la pestaña esté abierta):
      juegosHoy   → array de juegos crudos de MLB Stats API de hoy.
@@ -72,6 +84,15 @@ button:disabled{opacity:.5}
                    nunca se usa para meter ruido de "en vivo" al cálculo.
      historico2026 → array de filas históricas (mismo shape que se
                    guarda en localStorage vía MLBPRO_CORE).
+
+   VALIDACIÓN DE NÚMEROS (esNumeroReal):
+     safe(x) y todas las comprobaciones de windDir/totalRuns/totalKs
+     de este archivo usan esNumeroReal(v), NO Number.isFinite(Number(v))
+     a secas. Number(null)===0, Number("")===0 y Number(true)===1, así
+     que Number.isFinite(Number(v)) por sí solo convertía dato ausente
+     en un 0 (o 1) válido de forma silenciosa. esNumeroReal(v) descarta
+     explícitamente null, undefined, "", strings de solo espacios y
+     booleanos ANTES de convertir, igual que en mlbpro-viento.js.
 
    BOTONES → FUNCIÓN → QUÉ HACE:
      "JALAR JUEGOS DE HOY"        → jalarJuegosHoy()
@@ -92,29 +113,46 @@ button:disabled{opacity:.5}
        (evaluarMercados), brújula (renderBrujula), y panel de
        confianza arriba de todo (MLBPRO_CONFIDENCE_PANEL.render).
      "BORRAR CACHE HISTÓRICO"     → borrarCacheHistorico()
-       Pide confirmación, borra localStorage[CORE.CACHE_HIST] y vacía
-       historico2026 en memoria. Después hay que volver a tocar
-       "JALAR HISTÓRICO 2026" para reconstruirlo.
+       Pide confirmación, llama a CORE.borrarHistoricoCache() (único
+       punto real de borrado — index.html ya no toca localStorage
+       directo) y vacía historico2026 en memoria SOLO si el borrado
+       devolvió true. Si CORE.borrarHistoricoCache() devuelve false,
+       muestra error y NO afirma que se borró. Después hay que volver
+       a tocar "JALAR HISTÓRICO 2026" para reconstruirlo.
 
    FUNCIONES INTERNAS CLAVE — QUÉ RECIBEN / QUÉ DEVUELVEN:
      escenaAbierta(today) → string. Etiqueta de techo SOLO para
        mostrar (lee ROOF_STATUS.esDomoCerradoFijo/esTechoNoVerificado
        — no decide nada por su cuenta, es texto derivado).
      evaluarMercados(today, pct, histCount, ranked) → {escena, brisa,
-       carreras, f5, ponches, veredicto, favorece, promCarrerasHist,
-       promPonchesHist}. El cerebro del veredicto final. today = fila
-       de clima de hoy de un juego. pct = score del mejor histórico.
-       histCount = cuántos históricos pasan UMBRAL_MID. ranked = los
-       hasta 5 históricos más parecidos (ya vienen de VIENTO.scoreMatch).
+       carreras, ponches, veredicto, favorece, promCarrerasHist,
+       promPonchesHist}. El cerebro del veredicto final (solo carreras
+       y ponches; sin F5). today = fila de clima de hoy de un juego.
+       pct = score del mejor histórico (ya con prioridad de mismo
+       parque aplicada). histCount = SOLO históricos del mismo parque
+       canónico (stadiumNorm(stadiumCanonName())) que pasan UMBRAL_MID
+       — no cuenta históricos de otros parques aunque tengan score alto.
+       ranked = hasta 5 históricos: primero TODOS los del mismo parque
+       ordenados por score, completado con otros parques solo si faltan
+       para llegar a 5 (armado en generarConclusionCoincidencia, no acá).
+       La decisión de si favorece bateo o pitcheo SIEMPRE sale de
+       VIENTO.evaluarViento() — este archivo no reimplementa esa
+       lógica, solo traduce el resultado a texto.
      renderBrujula(today, gamePk) → string HTML/SVG. Dibuja la brújula
-       animada. today.windDir es "de dónde viene"; internamente suma
-       180° para animar "hacia dónde va" (ver mlbpro-viento.js).
+       animada, consumiendo VIENTO para la convención física: today.windDir
+       es "de dónde viene"; internamente suma 180° para animar "hacia
+       dónde va" (documentado también en mlbpro-viento.js). Si
+       getOrientacionParque() no devuelve un número real (esNumeroReal),
+       la brújula NO rota con un grado inventado: usa hpACF=0 (compás
+       sin ajustar al parque, orientación absoluta) y muestra la
+       etiqueta "ORIENTACIÓN NO CONFIRMADA" debajo. Esto no decide
+       bateo/pitcheo, es puramente visual.
 
    QUÉ TOCA:
      DOM: #estado, #lista. localStorage: vía MLBPRO_CORE únicamente
      (nunca llama a localStorage directo).
 
-   SI SE AGREGA MONEYLINE / K6 / MÁS MOTORES:
+   SI SE AGREGA OTRO MOTOR DE MERCADO (fuera del alcance actual):
      - Nueva fecha/hora → usar CORE.hoyISO()/horaJuego(), nunca crear otra.
      - Nuevo umbral de coincidencia → usar CORE.UMBRAL_OK/UMBRAL_MID.
      - Nuevo gate de techo/domo → preguntarle a ROOF_STATUS, no
@@ -122,6 +160,26 @@ button:disabled{opacity:.5}
      - Nueva pantalla que necesite el histórico → CORE.leerHistoricoCache(),
        nunca leer localStorage con la clave a mano (así si el nombre
        de la clave cambia algún día, solo hay que tocarlo en un lugar).
+     - Nueva comparación de parque → stadiumNorm(stadiumCanonName(...))
+       en ambos lados, nunca comparar el string crudo de venue.
+
+   FECHA:
+     13 jul 2026.
+
+   ESTADO:
+     NO_CONFIRMADO — correcciones aplicadas por lectura de código.
+     Pendiente de prueba real que confirme: (a) orden de carga correcto
+     con estadios.js primero, (b) que la brújula ya no rota con 45°
+     inventado y muestra "ORIENTACIÓN NO CONFIRMADA" cuando corresponde,
+     (c) que esNumeroReal rechaza null/""/espacios/booleanos en los
+     campos afectados, (d) que la comparación de parque por
+     stadiumNorm(stadiumCanonName()) sigue agrupando el mismo parque
+     que antes, (e) que ya no aparece F5 en ningún texto visual, (f)
+     que "BORRAR CACHE HISTÓRICO" usa CORE.borrarHistoricoCache() y
+     muestra error real si devuelve false, y (g) que histCount y la
+     lista de "Similares históricos" priorizan de verdad TODOS los
+     históricos del mismo parque antes de completar con otros parques,
+     sin cortar a 5 antes de esa priorización.
    ============================================================ */
 const CORE = window.MLBPRO_CORE;
 const VIENTO = window.MLBPRO_VIENTO;
@@ -132,7 +190,21 @@ let historico2026 = [];
 
 function setEstado(t) { document.getElementById("estado").textContent = t; }
 function render(html) { document.getElementById("lista").innerHTML = html; }
-function safe(x) { return Number.isFinite(Number(x)) ? Number(x) : "NO"; }
+
+// Valida que `v` sea un número real usable (no null, no undefined, no
+// "", no string de solo espacios, no booleano). Number(null)===0 y
+// Number("")===0, y Number.isFinite de eso da true — por eso no basta
+// con Number.isFinite(Number(v)): eso convertía silenciosamente dato
+// ausente en un 0 válido. Misma validación que esNumeroReal() en
+// mlbpro-viento.js, reimplementada aquí porque index.html no puede
+// importar una función interna de otro módulo.
+function esNumeroReal(v) {
+  if (v === null || v === undefined || v === "") return false;
+  if (typeof v === "boolean") return false;
+  if (typeof v === "string" && v.trim() === "") return false;
+  return Number.isFinite(Number(v));
+}
+function safe(x) { return esNumeroReal(x) ? Number(x) : "NO"; }
 
 function cardJuegoHoy(g, c) {
   const away = g.teams?.away?.team?.name || "?";
@@ -148,7 +220,7 @@ function cardJuegoHoy(g, c) {
           <div class="meta">Humedad: ${safe(c.humidity)}%</div>
           <div class="meta">Precip: ${safe(c.precip)}</div>
           <div class="meta">Viento: ${safe(c.windMph)} mph</div>
-          <div class="meta">Dir viento: ${Number.isFinite(c.windDir) ? c.windDir + "°" : "NO CONFIRMADA"}</div>
+          <div class="meta">Dir viento: ${esNumeroReal(c.windDir) ? c.windDir + "°" : "NO CONFIRMADA"}</div>
           <div class="meta">Roof: ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(venue).label : "NO CONFIRMADO"}</div>
         ` : `<div class="bad">Clima no confirmado</div>`
       }
@@ -347,7 +419,7 @@ function calcularCoincidencia() {
           <div class="matchup">${away} @ ${home}</div>
           <div class="estadio">${venue}</div>
           <div class="meta">Fecha: ${today.date || CORE.hoyISO()} · Hora: ${CORE.horaJuego(today.gameDate)}</div>
-          <div class="meta">Temp: ${safe(today.tempF)}°F · Humedad: ${safe(today.humidity)}% · Viento: ${safe(today.windMph)} mph · Dir: ${Number.isFinite(Number(today.windDir)) ? today.windDir + "°" : "SIN DATO"}</div>
+          <div class="meta">Temp: ${safe(today.tempF)}°F · Humedad: ${safe(today.humidity)}% · Viento: ${safe(today.windMph)} mph · Dir: ${esNumeroReal(today.windDir) ? today.windDir + "°" : "SIN DATO"}</div>
           <div class="match">Mejor coincidencia: <span class="${cls}">${top ? top.score : 0}%</span></div>
           <details class="hist" style="cursor:pointer">
             <summary style="cursor:pointer;font-weight:800">Similares históricos</summary>
@@ -356,7 +428,7 @@ function calcularCoincidencia() {
                 ${r.date} · ${r.away} @ ${r.home} · ${r.venue}
                 · ${safe(r.tempF)}°F
                 · viento ${safe(r.windMph)} mph
-                · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir + "°" : "NO"}
+                · dir ${esNumeroReal(r.windDir) ? r.windDir + "°" : "NO"}
                 · hum ${safe(r.humidity)}%
                 · carreras ${safe(r.totalRuns)}
                 · ponches ${safe(r.totalKs)}
@@ -393,14 +465,14 @@ function evaluarMercados(today, pct, histCount, ranked) {
   const escena = escenaAbierta(today);
   const brisa = VIENTO.tipoBrisa(today);
 
-  let carreras = "NO COINCIDENCIA", f5 = "NO COINCIDENCIA", ponches = "NO COINCIDENCIA";
+  let carreras = "NO COINCIDENCIA", ponches = "NO COINCIDENCIA";
   let veredicto = "PASAR / NO COINCIDENCIA", favorece = "NO CONFIRMADO";
   let promCarrerasHist = null, promPonchesHist = null;
 
-  const listaValida = Array.isArray(ranked) ? ranked.filter(x => Number.isFinite(Number(x.totalRuns))) : [];
+  const listaValida = Array.isArray(ranked) ? ranked.filter(x => esNumeroReal(x.totalRuns)) : [];
   if (listaValida.length) promCarrerasHist = listaValida.reduce((s, x) => s + Number(x.totalRuns), 0) / listaValida.length;
 
-  const listaPonches = Array.isArray(ranked) ? ranked.filter(x => Number.isFinite(Number(x.totalKs))) : [];
+  const listaPonches = Array.isArray(ranked) ? ranked.filter(x => esNumeroReal(x.totalKs)) : [];
   if (listaPonches.length) promPonchesHist = listaPonches.reduce((s, x) => s + Number(x.totalKs), 0) / listaPonches.length;
 
   if (promCarrerasHist !== null) carreras = promCarrerasHist.toFixed(1) + " carreras prom. (" + listaValida.length + " juego(s) similares)";
@@ -425,15 +497,15 @@ function evaluarMercados(today, pct, histCount, ranked) {
 
   if (window.MLBPRO_ROOF_STATUS && window.MLBPRO_ROOF_STATUS.esDomoCerradoFijo(today?.venue)) {
     veredicto = "MIRAR SOLO MOTOR PRINCIPAL, NO CLIMA";
-    return { escena, brisa, carreras, f5, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
+    return { escena, brisa, carreras, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
   }
   if (window.MLBPRO_ROOF_STATUS && window.MLBPRO_ROOF_STATUS.esTechoNoVerificado(today?.venue)) {
     veredicto = "NO FORZAR / TECHO " + window.MLBPRO_ROOF_STATUS.getRoofStatus(today?.venue).label;
-    return { escena, brisa, carreras, f5, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
+    return { escena, brisa, carreras, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
   }
   if (!baseDatoReal) {
     veredicto = "SIN DATO SUFICIENTE — solo " + listaValida.length + " similar(es) con carreras confirmadas";
-    return { escena, brisa, carreras, f5, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
+    return { escena, brisa, carreras, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
   }
 
   if (baseFuerte && evViento.favoreceBateo === true) {
@@ -446,13 +518,20 @@ function evaluarMercados(today, pct, histCount, ranked) {
     veredicto = "COINCIDENCIA BAJA — " + listaValida.length + " similares con " + promCarrerasHist.toFixed(1) + " carreras prom.";
   }
 
-  return { escena, brisa, carreras, f5, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
+  return { escena, brisa, carreras, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
 }
 
 function renderBrujula(today, gamePk) {
-  const hpACF = (typeof getOrientacionParque !== "undefined") ? getOrientacionParque(today?.venue) : 45;
+  const hpACFraw = (typeof getOrientacionParque !== "undefined") ? getOrientacionParque(today?.venue) : null;
+  const tieneOrientacion = esNumeroReal(hpACFraw);
+  // Sin orientación real confirmada, NO se inventa un grado (antes
+  // caía a 45°). hpACF queda en 0, que en la rotación de abajo
+  // equivale a "no rotar": el compás se muestra en su orientación
+  // absoluta (N arriba), no ajustada al parque, y se avisa con la
+  // etiqueta "ORIENTACIÓN NO CONFIRMADA" debajo.
+  const hpACF = tieneOrientacion ? Number(hpACFraw) : 0;
   const windDir = Number(today?.windDir);
-  const tieneDir = Number.isFinite(windDir);
+  const tieneDir = esNumeroReal(today?.windDir);
   const id = "brujula_" + gamePk;
 
   const puntos16 = [
@@ -539,6 +618,7 @@ function renderBrujula(today, gamePk) {
       <div class="small">
         ${tieneDir ? `Viento de ${windDir}° hacia ${(windDir + 180) % 360}°` : "SIN DIRECCIÓN CONFIRMADA"}
       </div>
+      ${!tieneOrientacion ? `<div class="small bad">ORIENTACIÓN NO CONFIRMADA — compás sin ajustar al parque</div>` : ""}
     </div>
   `;
 }
@@ -569,15 +649,33 @@ function generarConclusionCoincidencia() {
         continue;
       }
 
-      let ranked = hist.map(x => ({ ...x, score: VIENTO.scoreMatch(today, x) }))
-        .sort((a, b) => b.score - a.score).slice(0, 5);
+      // 1) Score de TODO el histórico (sin cortar todavía).
+      const todosConScore = hist.map(x => ({ ...x, score: VIENTO.scoreMatch(today, x) }));
 
-      const mismoParque = ranked.filter(x => x.venue === today.venue);
-      if (mismoParque.length) ranked = mismoParque.concat(ranked.filter(x => x.venue !== today.venue)).slice(0, 5);
+      // 2) Separar por parque canónico (mismo parque de hoy vs el resto),
+      // cada grupo ordenado por score. Sin duplicados: son particiones
+      // mutuamente excluyentes del mismo array.
+      const mismoParque = todosConScore
+        .filter(x => x.venue && today.venue &&
+          stadiumNorm(stadiumCanonName(x.venue)) === stadiumNorm(stadiumCanonName(today.venue)))
+        .sort((a, b) => b.score - a.score);
+
+      const otrosParques = todosConScore
+        .filter(x => !(x.venue && today.venue &&
+          stadiumNorm(stadiumCanonName(x.venue)) === stadiumNorm(stadiumCanonName(today.venue))))
+        .sort((a, b) => b.score - a.score);
+
+      // 3) Mismo parque primero, se completa con otros parques SOLO si
+      // faltan para llegar a 5. El corte a 5 pasa acá, al final.
+      const ranked = mismoParque.concat(otrosParques).slice(0, 5);
 
       const top = ranked[0];
       const pct = top ? Number(top.score || 0) : 0;
-      const histCount = ranked.filter(x => Number(x.score || 0) >= CORE.UMBRAL_MID).length;
+      // histCount: SOLO históricos del mismo parque canónico que pasan
+      // UMBRAL_MID — sobre el grupo completo de mismoParque (no solo los
+      // 5 visibles), así el número no se recorta artificialmente si hay
+      // más de 5 juegos reales del mismo parque por encima del umbral.
+      const histCount = mismoParque.filter(x => Number(x.score || 0) >= CORE.UMBRAL_MID).length;
       const ev = evaluarMercados(today, pct, histCount, ranked);
       const cls = pct >= CORE.UMBRAL_OK ? "ok" : pct >= CORE.UMBRAL_MID ? "mid" : "bad";
 
@@ -591,7 +689,7 @@ function generarConclusionCoincidencia() {
           <div class="meta">Humedad: ${safe(today.humidity)}%</div>
           <div class="meta">Precip: ${safe(today.precip)}%</div>
           <div class="meta">Viento: ${safe(today.windMph)} mph</div>
-          <div class="meta">Dir viento: ${Number.isFinite(Number(today.windDir)) ? today.windDir + "°" : "SIN DATO"}</div>
+          <div class="meta">Dir viento: ${esNumeroReal(today.windDir) ? today.windDir + "°" : "SIN DATO"}</div>
           ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
           ${renderBrujula(today, g.gamePk)}
           <details class="match" style="cursor:pointer">
@@ -601,7 +699,6 @@ function generarConclusionCoincidencia() {
             <div class="meta"><b>Tipo de brisa:</b> ${ev.brisa}</div>
             <div class="meta"><b>Brisa favorece:</b> ${ev.favorece}</div>
             <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"}</div>
-            <div class="meta"><b>F5:</b> ${ev.f5 || "SIN DATOS"} — sin base fuerte para F5</div>
             <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"}</div>
           </details>
           <div class="match"><b>Conclusión Data Madre:</b> ${ev.veredicto || "NO USAR COMO PICK"}</div>
@@ -612,7 +709,7 @@ function generarConclusionCoincidencia() {
                 <div><b>${i + 1}. ${r.date}</b></div>
                 <div><b>Juego:</b> ${r.away} @ ${r.home}</div>
                 <div><b>Parque:</b> ${r.venue}</div>
-                <div><b>Clima:</b> ${safe(r.tempF)}°F · viento ${safe(r.windMph)} mph · dir ${Number.isFinite(Number(r.windDir)) ? r.windDir + "°" : "NO"} · hum ${safe(r.humidity)}%</div>
+                <div><b>Clima:</b> ${safe(r.tempF)}°F · viento ${safe(r.windMph)} mph · dir ${esNumeroReal(r.windDir) ? r.windDir + "°" : "NO"} · hum ${safe(r.humidity)}%</div>
                 <div><b>Carreras:</b> ${safe(r.totalRuns)}</div>
                 <div><b>Ponches:</b> ${safe(r.totalKs)}</div>
                 <div><b>HRs:</b> ${safe(r.totalHRs)}</div>
@@ -633,7 +730,11 @@ function generarConclusionCoincidencia() {
 
 function borrarCacheHistorico() {
   if (!confirm("¿Borrar TODO el histórico guardado? No se puede deshacer.")) return;
-  localStorage.removeItem(CORE.CACHE_HIST);
+  const borrado = CORE.borrarHistoricoCache();
+  if (!borrado) {
+    setEstado("ERROR: no se pudo borrar el cache histórico.");
+    return;
+  }
   historico2026 = [];
   render("");
   setEstado("Cache histórico borrado. Tocá JALAR HISTÓRICO 2026 para reconstruirlo limpio.");
