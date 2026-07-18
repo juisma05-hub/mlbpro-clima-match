@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fuerza de Equipo — Test crudo</title>
+
+<style>
+  body {
+    font-family: monospace;
+    background: #0b0b0b;
+    color: #e6e6e6;
+    padding: 20px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  input,
+  button {
+    font-family: monospace;
+    font-size: 14px;
+    padding: 8px;
+    margin: 4px 0;
+  }
+
+  input {
+    width: 100%;
+    max-width: 360px;
+    box-sizing: border-box;
+    background: #111;
+    color: #e6e6e6;
+    border: 1px solid #444;
+  }
+
+  label {
+    display: block;
+    margin-top: 12px;
+  }
+
+  button {
+    margin-top: 14px;
+    background: #1a1a1a;
+    color: #e6e6e6;
+    border: 1px solid #444;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: #252525;
+  }
+
+  .bloque {
+    border: 1px solid #333;
+    padding: 12px;
+    margin-top: 12px;
+    border-radius: 4px;
+  }
+
+  .ok {
+    color: #4caf50;
+  }
+
+  .no {
+    color: #e05252;
+  }
+
+  .warn {
+    color: #e0a552;
+  }
+
+  h1,
+  h3 {
+    margin-bottom: 6px;
+  }
+
+  p {
+    margin: 5px 0;
+  }
+
+  #resultado {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #111;
+    padding: 12px;
+    border: 1px solid #333;
+    margin-top: 16px;
+    font-size: 12px;
+    overflow: auto;
+  }
+</style>
+</head>
+
+<body>
+
+<!--
+============================================================
+PRÓLOGO — fuerza-equipo-test.html
+============================================================
+QUÉ ES:
+  Herramienta aislada para probar fuerza-equipo.js usando el
+  histórico ya guardado por MLBPRO_CORE.
+
+DE QUÉ DEPENDE:
+  1. mlbpro-core.js
+  2. fuerza-equipo.js
+
+ORDEN OBLIGATORIO:
+  <script src="mlbpro-core.js"></script>
+  <script src="fuerza-equipo.js"></script>
+
+QUÉ HACE:
+  Permite escribir:
+    - equipo local;
+    - equipo visitante;
+    - fecha de corte.
+
+  Ejecuta:
+    calcularFuerzaEquipo(homeTeam, awayTeam, fechaCorteISO)
+
+  Muestra:
+    - confirmado;
+    - estado;
+    - muestra de cada equipo;
+    - récord general;
+    - últimos 5;
+    - últimos 10;
+    - racha;
+    - carreras anotadas y permitidas;
+    - diferencial;
+    - récord local;
+    - récord visitante;
+    - advertencias de orden;
+    - JSON completo.
+
+QUÉ NO HACE:
+  - No toca localStorage directamente.
+  - No escribe caché.
+  - No conecta Moneyline.
+  - No modifica Coincidencia, F5, K6 ni clima.
+  - No calcula score_home ni score_away.
+============================================================
+-->
+
+<h1>Fuerza de Equipo — Herramienta cruda</h1>
+
+<p>
+  Fuente única:
+  <code>MLBPRO_CORE.leerHistoricoCache()</code>
+</p>
+
+<p>
+  Los nombres deben coincidir exactamente con los campos
+  <code>home</code> y <code>away</code> del histórico.
+</p>
+
+<label for="inpHome">Equipo local:</label>
+<input
+  type="text"
+  id="inpHome"
+  placeholder="Ej: New York Yankees"
+  value="New York Yankees"
+>
+
+<label for="inpAway">Equipo visitante:</label>
+<input
+  type="text"
+  id="inpAway"
+  placeholder="Ej: Boston Red Sox"
+  value="Boston Red Sox"
+>
+
+<label for="inpFecha">Fecha de corte:</label>
+<input
+  type="text"
+  id="inpFecha"
+  placeholder="YYYY-MM-DD"
+  value="2026-07-17"
+>
+
+<br>
+<button type="button" onclick="ejecutar()">Calcular fuerza</button>
+
+<div id="salidaResumen"></div>
+
+<h3>JSON completo</h3>
+<div id="resultado">Esperando prueba...</div>
+
+<script src="mlbpro-core.js"></script>
+<script src="fuerza-equipo.js"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  function escaparHtml(valor) {
+    return String(valor ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function fmtRecord(record) {
+    if (!record) return "N/D";
+
+    const ganados = Number.isFinite(record.ganados)
+      ? record.ganados
+      : "-";
+
+    const perdidos = Number.isFinite(record.perdidos)
+      ? record.perdidos
+      : "-";
+
+    const juegos = Number.isFinite(record.juegos)
+      ? record.juegos
+      : 0;
+
+    return `${ganados}-${perdidos} (${juegos} juegos)`;
+  }
+
+  function renderPerfil(titulo, perfil) {
+    if (!perfil) {
+      return `
+        <div class="bloque">
+          <h3>${escaparHtml(titulo)}</h3>
+          <p class="no">Sin perfil disponible.</p>
+        </div>
+      `;
+    }
+
+    const claseEstado = perfil.confirmado ? "ok" : "no";
+
+    const advertencia = perfil.advertencia_orden
+      ? `<p class="warn">⚠ ${escaparHtml(perfil.advertencia_orden)}</p>`
+      : "";
+
+    const rachaTipo = perfil.racha_actual?.tipo ?? "N/D";
+    const rachaCantidad = perfil.racha_actual?.cantidad ?? "N/D";
+
+    return `
+      <div class="bloque">
+        <h3>
+          ${escaparHtml(titulo)} —
+          ${escaparHtml(perfil.equipo || "?")}
+        </h3>
+
+        <p class="${claseEstado}">
+          confirmado: ${perfil.confirmado}
+          |
+          nota: ${escaparHtml(perfil.nota)}
+        </p>
+
+        ${advertencia}
+
+        <p>
+          Juegos totales: ${perfil.juegos_totales}
+          |
+          Récord: ${perfil.ganados ?? "-"}-${perfil.perdidos ?? "-"}
+          |
+          % victorias: ${perfil.porcentaje_victorias ?? "N/D"}
+        </p>
+
+        <p>
+          Últimos 5: ${fmtRecord(perfil.ultimos_5)}
+        </p>
+
+        <p>
+          Últimos 10: ${fmtRecord(perfil.ultimos_10)}
+        </p>
+
+        <p>
+          Racha actual:
+          ${escaparHtml(rachaTipo)} x${escaparHtml(rachaCantidad)}
+        </p>
+
+        <p>
+          Carreras anotadas: ${perfil.carreras_anotadas ?? "N/D"}
+          |
+          permitidas: ${perfil.carreras_permitidas ?? "N/D"}
+          |
+          diferencial: ${perfil.diferencial_carreras ?? "N/D"}
+        </p>
+
+        <p>
+          Promedio anotadas: ${perfil.promedio_anotadas ?? "N/D"}
+          |
+          promedio permitidas: ${perfil.promedio_permitidas ?? "N/D"}
+        </p>
+
+        <p>
+          Récord local: ${fmtRecord(perfil.record_local)}
+        </p>
+
+        <p>
+          Récord visitante: ${fmtRecord(perfil.record_visitante)}
+        </p>
+
+        <p>
+          Juegos excluidos por datos inválidos:
+          ${perfil.juegos_excluidos_por_datos_invalidos ?? 0}
+        </p>
+      </div>
+    `;
+  }
+
+  function mostrarError(mensaje) {
+    document.getElementById("salidaResumen").innerHTML =
+      `<div class="bloque"><p class="no">${escaparHtml(mensaje)}</p></div>`;
+
+    document.getElementById("resultado").textContent = mensaje;
+  }
+
+  function ejecutar() {
+    const home = document.getElementById("inpHome").value.trim();
+    const away = document.getElementById("inpAway").value.trim();
+    const fecha = document.getElementById("inpFecha").value.trim();
+
+    if (
+      typeof window.MLBPRO_CORE === "undefined" ||
+      typeof window.MLBPRO_CORE.leerHistoricoCache !== "function"
+    ) {
+      mostrarError(
+        "ERROR: mlbpro-core.js no cargó o no expone leerHistoricoCache()."
+      );
+      return;
+    }
+
+    if (typeof window.calcularFuerzaEquipo !== "function") {
+      mostrarError(
+        "ERROR: fuerza-equipo.js no cargó o no expone calcularFuerzaEquipo()."
+      );
+      return;
+    }
+
+    let resultado;
+
+    try {
+      resultado = window.calcularFuerzaEquipo(home, away, fecha);
+    } catch (error) {
+      mostrarError(
+        "ERROR ejecutando calcularFuerzaEquipo(): " +
+        (error?.message || String(error))
+      );
+      return;
+    }
+
+    const claseEstado = resultado?.confirmado ? "ok" : "no";
+
+    document.getElementById("salidaResumen").innerHTML = `
+      <div class="bloque">
+        <p class="${claseEstado}">
+          <strong>estado:</strong>
+          ${escaparHtml(resultado?.estado ?? "N/D")}
+          |
+          <strong>confirmado:</strong>
+          ${resultado?.confirmado ?? false}
+        </p>
+
+        <p>
+          <strong>fecha_corte:</strong>
+          ${escaparHtml(resultado?.fecha_corte ?? "N/D")}
+        </p>
+
+        <p>
+          <strong>score_home:</strong>
+          ${resultado?.score_home ?? "null"}
+          |
+          <strong>score_away:</strong>
+          ${resultado?.score_away ?? "null"}
+        </p>
+
+        <p>
+          <strong>nota:</strong>
+          ${escaparHtml(resultado?.nota ?? "N/D")}
+        </p>
+      </div>
+
+      ${renderPerfil("HOME", resultado?.home)}
+      ${renderPerfil("AWAY", resultado?.away)}
+    `;
+
+    document.getElementById("resultado").textContent =
+      JSON.stringify(resultado, null, 2);
+  }
+
+  window.ejecutar = ejecutar;
+})();
+</script>
+
+</body>
+</html>
