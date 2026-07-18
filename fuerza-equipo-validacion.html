@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fuerza de Equipo — Validación 70/30</title>
+
+<style>
+  body {
+    font-family: monospace;
+    background: #0b0b0b;
+    color: #e6e6e6;
+    padding: 20px;
+    max-width: 1000px;
+    margin: 0 auto;
+  }
+
+  button {
+    font-family: monospace;
+    font-size: 14px;
+    padding: 8px 14px;
+    margin: 4px 0;
+    background: #1a1a1a;
+    color: #e6e6e6;
+    border: 1px solid #444;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: #252525;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 14px;
+    font-size: 13px;
+  }
+
+  th, td {
+    border: 1px solid #333;
+    padding: 6px 10px;
+    text-align: right;
+  }
+
+  th {
+    background: #161616;
+    text-align: center;
+  }
+
+  td:first-child, th:first-child {
+    text-align: left;
+  }
+
+  .bloque {
+    border: 1px solid #333;
+    padding: 12px;
+    border-radius: 4px;
+    margin-top: 16px;
+  }
+
+  .ok { color: #4caf50; }
+  .no { color: #e05252; }
+  .warn { color: #e0a552; }
+
+  #log {
+    white-space: pre-wrap;
+    background: #111;
+    padding: 12px;
+    border: 1px solid #333;
+    margin-top: 16px;
+    font-size: 12px;
+    max-height: 260px;
+    overflow: auto;
+  }
+
+  h1, h2, h3 { margin-bottom: 6px; }
+  p { margin: 4px 0; }
+</style>
+</head>
+
+<body>
+
+<!--
+============================================================
+PRÓLOGO — fuerza-equipo-validacion.html
+============================================================
+QUÉ ES:
+  Herramienta de auditoría que divide el histórico disponible en dos
+  tramos CRONOLÓGICOS:
+
+    - Desarrollo:  primer 70% de las filas válidas (más antiguas).
+    - Validación:  último 30% de las filas válidas (más recientes).
+
+  Mide, en cada tramo por separado, tres criterios:
+
+    1. Últimos 10.
+    2. Forma original (Últimos 5 + Últimos 10 + Récord local/visitante),
+       por mayoría simple de esas tres señales.
+    3. Unanimidad de 6 señales independientes:
+       Porcentaje general, Últimos 5, Últimos 6, Últimos 10,
+       Récord local/visitante, Diferencial crudo de carreras.
+
+  No es un motor de predicción.
+  No fija pesos.
+  No modifica mlbpro-core.js, fuerza-equipo.js ni
+  fuerza-equipo-backtest.html.
+  No conecta Moneyline, Coincidencia, F5, K6 ni clima.
+  No escribe caché.
+
+DEPENDENCIAS (no se modifican, se cargan tal cual):
+  1. mlbpro-core.js
+  2. fuerza-equipo.js
+
+ORDEN OBLIGATORIO:
+  <script src="mlbpro-core.js"></script>
+  <script src="fuerza-equipo.js"></script>
+
+BLINDAJE HISTÓRICO:
+  Para cada juego evaluado, en cualquiera de los dos tramos, se llama:
+
+    calcularFuerzaEquipo(juego.home, juego.away, fechaDelJuego)
+
+  fuerza-equipo.js excluye todo juego con fecha igual o posterior a
+  la fecha de corte, así que cada evaluación usa exclusivamente
+  partidos con fecha ESTRICTAMENTE anterior al juego evaluado. Esto
+  aplica igual dentro del tramo de desarrollo y dentro del tramo de
+  validación — el corte 70/30 solo decide QUÉ JUEGOS SE EVALÚAN
+  (para medir el desempeño), no cambia la regla de qué historial
+  puede usar cada perfil.
+
+  Últimos 6 no lo expone fuerza-equipo.js directamente, así que esta
+  herramienta lo reconstruye por su cuenta desde la misma caché
+  histórica completa (MLBPRO_CORE.leerHistoricoCache()), con el mismo
+  criterio de fecha estrictamente anterior, igual que hace
+  fuerza-equipo-backtest.html.
+
+CÓMO SE DIVIDE 70/30:
+  1. Se leen todas las filas de MLBPRO_CORE.leerHistoricoCache().
+  2. Se filtran las filas estructuralmente válidas (home/away no
+     vacíos, homeRuns y awayRuns numéricos finitos, sin empate,
+     fecha ISO real).
+  3. Se ordenan cronológicamente (fecha y luego gamePk ascendente
+     como desempate, igual que fuerza-equipo-backtest.html).
+  4. Corte = floor(total * 0.7).
+     - Desarrollo  = filas[0 .. corte)
+     - Validación  = filas[corte .. total)
+
+  El corte se calcula sobre las FILAS VÁLIDAS totales, sin filtro de
+  límite adicional.
+
+CRITERIOS Y CÓMO SE VOTAN:
+  - Últimos 10: comparación directa Home vs Away. Si algún lado no
+    tiene señal (sin juegos, o empate exacto), no hay predicción para
+    ese juego con ese criterio → "sin señal".
+
+  - Forma original: mayoría simple entre Últimos 5, Últimos 10 y
+    Récord local/visitante. Si 2 de 3 coinciden, esa es la
+    predicción. Si hay empate 1-1 con una señal nula, o 0 señales
+    válidas, o empate de votos → "sin señal".
+
+  - Unanimidad de 6 señales independientes: requiere que las 6
+    señales (Porcentaje general, Últimos 5, Últimos 6, Últimos 10,
+    Récord L/V, Diferencial crudo) tengan valor Y coincidan TODAS en
+    el mismo lado. Si falta una sola señal, o no hay unanimidad total
+    → "sin señal" (no se cuenta como acierto ni como fallo).
+
+QUÉ MUESTRA POR TRAMO Y POR CRITERIO:
+  - juegos evaluados
+  - aciertos
+  - fallos
+  - sin señal
+  - % de acierto (sobre juegos con predicción, es decir aciertos+fallos)
+  - % de cobertura (predicciones sobre el total de juegos evaluados)
+
+QUÉ TOCA:
+  - Lee el histórico solo mediante MLBPRO_CORE.leerHistoricoCache().
+  - No toca localStorage directamente.
+  - No escribe ninguna caché.
+  - No modifica ningún archivo existente.
+  - No conecta Moneyline, Coincidencia, F5, K6 ni clima.
+
+LIMITACIONES DOCUMENTADAS:
+  - calcularFuerzaEquipo recorre el histórico completo por cada
+    juego evaluado (O(n²)), igual que en fuerza-equipo-backtest.html.
+    Con cachés grandes esto puede tardar varios segundos.
+  - Si el total de filas válidas es muy bajo, el tramo de validación
+    (30%) puede quedar con muy pocos juegos o ninguno; en ese caso se
+    reporta con juegos = 0 y N/D en los porcentajes, sin inventar
+    datos.
+  - Doubleheaders sin gamePk confiable heredan la misma limitación de
+    orden ya documentada en fuerza-equipo.js y en
+    fuerza-equipo-backtest.html.
+============================================================
+-->
+
+<h1>Fuerza de Equipo — Validación 70/30</h1>
+
+<p>
+  Divide el histórico cronológicamente: 70% inicial (desarrollo) y
+  30% final (validación). Mide Últimos 10, Forma original y
+  Unanimidad de 6 señales en cada tramo, usando siempre solo partidos
+  con fecha estrictamente anterior al juego evaluado.
+</p>
+
+<button type="button" onclick="ejecutarValidacion()">
+  Correr validación
+</button>
+
+<div id="resumenGeneral"></div>
+<div id="tramoDesarrollo"></div>
+<div id="tramoValidacion"></div>
+<div id="log"></div>
+
+<script src="mlbpro-core.js"></script>
+<script src="fuerza-equipo.js"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  const NOMBRE_ULTIMOS10 = "Últimos 10";
+  const NOMBRE_FORMA_ORIGINAL =
+    "Forma original (Últimos 5 + Últimos 10 + Récord L/V)";
+  const NOMBRE_UNANIMIDAD =
+    "Unanimidad (6 señales independientes)";
+
+  // ---------- Utilidades de fecha / validación de filas ----------
+  // (idénticas en criterio a fuerza-equipo.js / fuerza-equipo-backtest.html)
+
+  function esFechaISOValida(str) {
+    if (typeof str !== "string") return false;
+
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+    if (!match) return false;
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > 31) return false;
+
+    const fecha = new Date(Date.UTC(year, month - 1, day));
+
+    return (
+      fecha.getUTCFullYear() === year &&
+      fecha.getUTCMonth() === month - 1 &&
+      fecha.getUTCDate() === day
+    );
+  }
+
+  function fechaDeFila(row) {
+    const raw = row?.date;
+    if (typeof raw !== "string" || raw.length < 10) return null;
+    const fecha = raw.slice(0, 10);
+    return esFechaISOValida(fecha) ? fecha : null;
+  }
+
+  function gamePkNumerico(row) {
+    const valor = Number(row?.gamePk);
+    return Number.isFinite(valor) ? valor : null;
+  }
+
+  function filaValida(row) {
+    if (!row || typeof row !== "object") return false;
+    if (typeof row.home !== "string" || row.home.trim().length === 0) return false;
+    if (typeof row.away !== "string" || row.away.trim().length === 0) return false;
+    if (!Number.isFinite(row.homeRuns)) return false;
+    if (!Number.isFinite(row.awayRuns)) return false;
+    if (row.homeRuns === row.awayRuns) return false; // sin ganador real no hay para validar
+    return fechaDeFila(row) !== null;
+  }
+
+  function ordenarFilasCronologicamente(filas) {
+    return filas
+      .map(function (row, indiceOriginal) {
+        return { row: row, indiceOriginal: indiceOriginal };
+      })
+      .sort(function (a, b) {
+        const fechaA = fechaDeFila(a.row);
+        const fechaB = fechaDeFila(b.row);
+
+        if (fechaA !== fechaB) {
+          return fechaA < fechaB ? -1 : 1;
+        }
+
+        const gamePkA = gamePkNumerico(a.row);
+        const gamePkB = gamePkNumerico(b.row);
+
+        if (gamePkA !== null && gamePkB !== null && gamePkA !== gamePkB) {
+          return gamePkA - gamePkB;
+        }
+
+        if (gamePkA !== null && gamePkB === null) return -1;
+        if (gamePkA === null && gamePkB !== null) return 1;
+
+        return a.indiceOriginal - b.indiceOriginal;
+      })
+      .map(function (item) {
+        return item.row;
+      });
+  }
+
+  // Últimos N para un equipo, calculado directamente sobre la caché
+  // completa de filas válidas, usando exclusivamente juegos con
+  // fecha estrictamente anterior a fechaCorte. Igual criterio que
+  // fuerza-equipo-backtest.html para Últimos 6.
+  function calcularVentanaEquipo(equipo, fechaCorte, cantidad, filasValidasOrdenadas) {
+    if (typeof equipo !== "string" || equipo.trim().length === 0) return null;
+
+    const nombreEquipo = equipo.trim();
+
+    const juegosEquipo = filasValidasOrdenadas.filter(function (row) {
+      const participa = row.home === nombreEquipo || row.away === nombreEquipo;
+      if (!participa) return false;
+      const fecha = fechaDeFila(row);
+      return fecha < fechaCorte;
+    });
+
+    const ultimos = juegosEquipo.slice(-cantidad);
+
+    if (ultimos.length === 0) return null;
+
+    let ganados = 0;
+    let perdidos = 0;
+
+    for (const row of ultimos) {
+      const esLocal = row.home === nombreEquipo;
+      const anotadas = esLocal ? row.homeRuns : row.awayRuns;
+      const permitidas = esLocal ? row.awayRuns : row.homeRuns;
+
+      if (anotadas > permitidas) ganados++;
+      else perdidos++;
+    }
+
+    return {
+      juegos: ultimos.length,
+      ganados: ganados,
+      perdidos: perdidos,
+      porcentaje: ganados / ultimos.length
+    };
+  }
+
+  // ---------- Predicción / conteo ----------
+
+  function predecir(valorHome, valorAway) {
+    if (!Number.isFinite(valorHome) || !Number.isFinite(valorAway)) return null;
+    if (valorHome === valorAway) return null;
+    return valorHome > valorAway ? "home" : "away";
+  }
+
+  // Forma original exige mínimo 2 de 3 votos coincidentes (Últimos5,
+  // Últimos10, Récord L/V). Con una sola señal válida (ej. ["home",
+  // null, null]) NO hay predicción: se devuelve null. Esto evita que
+  // una sola señal disponible se cuente como si fuera mayoría.
+  function votoMayoriaMinimoDos(predicciones) {
+    const votosHome = predicciones.filter(function (p) { return p === "home"; }).length;
+    const votosAway = predicciones.filter(function (p) { return p === "away"; }).length;
+
+    if (votosHome >= 2) return "home";
+    if (votosAway >= 2) return "away";
+    return null;
+  }
+
+  function unanimidadSeis(predicciones) {
+    if (predicciones.length !== 6) return null;
+    if (predicciones.some(function (p) { return p === null; })) return null;
+    if (predicciones.every(function (p) { return p === "home"; })) return "home";
+    if (predicciones.every(function (p) { return p === "away"; })) return "away";
+    return null;
+  }
+
+  function nuevoContador() {
+    return { juegos_evaluados: 0, aciertos: 0, fallos: 0, empates_sin_senal: 0 };
+  }
+
+  function registrar(contador, prediccion, ganadorReal) {
+    contador.juegos_evaluados++;
+    if (prediccion === null) {
+      contador.empates_sin_senal++;
+      return;
+    }
+    if (prediccion === ganadorReal) contador.aciertos++;
+    else contador.fallos++;
+  }
+
+  function porcentajeAcierto(contador) {
+    const decididos = contador.aciertos + contador.fallos;
+    if (decididos === 0) return null;
+    return +(contador.aciertos / decididos * 100).toFixed(1);
+  }
+
+  function porcentajeCobertura(contador) {
+    if (contador.juegos_evaluados === 0) return null;
+    const decididos = contador.aciertos + contador.fallos;
+    return +(decididos / contador.juegos_evaluados * 100).toFixed(1);
+  }
+
+  function log(mensaje) {
+    document.getElementById("log").textContent += mensaje + "\n";
+  }
+
+  // ---------- Evaluación de un tramo (desarrollo o validación) ----------
+
+  function evaluarTramo(segmento, filasValidasCompleto) {
+    const contadores = {};
+    contadores[NOMBRE_ULTIMOS10] = nuevoContador();
+    contadores[NOMBRE_FORMA_ORIGINAL] = nuevoContador();
+    contadores[NOMBRE_UNANIMIDAD] = nuevoContador();
+
+    let procesados = 0;
+    let sinHistorial = 0;
+    let conError = 0;
+
+    for (const row of segmento) {
+      const fechaCorte = fechaDeFila(row);
+      const ganadorReal = row.homeRuns > row.awayRuns ? "home" : "away";
+
+      let resultado;
+      try {
+        resultado = window.calcularFuerzaEquipo(row.home, row.away, fechaCorte);
+      } catch (error) {
+        conError++;
+        log(
+          "Error evaluando " + row.away + " @ " + row.home +
+          " (" + fechaCorte + "): " + (error?.message || String(error))
+        );
+        continue;
+      }
+
+      if (!resultado || !resultado.confirmado || !resultado.home || !resultado.away) {
+        sinHistorial++;
+        continue;
+      }
+
+      procesados++;
+
+      const perfilHome = resultado.home;
+      const perfilAway = resultado.away;
+
+      // Señal: porcentaje general
+      const pgHome = Number.isFinite(perfilHome.porcentaje_victorias)
+        ? perfilHome.porcentaje_victorias / 100 : null;
+      const pgAway = Number.isFinite(perfilAway.porcentaje_victorias)
+        ? perfilAway.porcentaje_victorias / 100 : null;
+      const predPG = predecir(pgHome, pgAway);
+
+      // Señal: últimos 5
+      const u5Home = (perfilHome.ultimos_5 && perfilHome.ultimos_5.juegos > 0 &&
+        Number.isFinite(perfilHome.ultimos_5.ganados))
+        ? perfilHome.ultimos_5.ganados / perfilHome.ultimos_5.juegos : null;
+      const u5Away = (perfilAway.ultimos_5 && perfilAway.ultimos_5.juegos > 0 &&
+        Number.isFinite(perfilAway.ultimos_5.ganados))
+        ? perfilAway.ultimos_5.ganados / perfilAway.ultimos_5.juegos : null;
+      const predU5 = predecir(u5Home, u5Away);
+
+      // Señal: últimos 6 (reconstruido, no lo expone fuerza-equipo.js)
+      const v6Home = calcularVentanaEquipo(row.home, fechaCorte, 6, filasValidasCompleto);
+      const v6Away = calcularVentanaEquipo(row.away, fechaCorte, 6, filasValidasCompleto);
+      const u6Home = v6Home && Number.isFinite(v6Home.porcentaje) ? v6Home.porcentaje : null;
+      const u6Away = v6Away && Number.isFinite(v6Away.porcentaje) ? v6Away.porcentaje : null;
+      const predU6 = predecir(u6Home, u6Away);
+
+      // Señal: últimos 10
+      const u10Home = (perfilHome.ultimos_10 && perfilHome.ultimos_10.juegos > 0 &&
+        Number.isFinite(perfilHome.ultimos_10.ganados))
+        ? perfilHome.ultimos_10.ganados / perfilHome.ultimos_10.juegos : null;
+      const u10Away = (perfilAway.ultimos_10 && perfilAway.ultimos_10.juegos > 0 &&
+        Number.isFinite(perfilAway.ultimos_10.ganados))
+        ? perfilAway.ultimos_10.ganados / perfilAway.ultimos_10.juegos : null;
+      const predU10 = predecir(u10Home, u10Away);
+
+      // Señal: récord local/visitante correspondiente
+      const rlHome = (perfilHome.record_local && perfilHome.record_local.juegos > 0 &&
+        Number.isFinite(perfilHome.record_local.ganados))
+        ? perfilHome.record_local.ganados / perfilHome.record_local.juegos : null;
+      const rvAway = (perfilAway.record_visitante && perfilAway.record_visitante.juegos > 0 &&
+        Number.isFinite(perfilAway.record_visitante.ganados))
+        ? perfilAway.record_visitante.ganados / perfilAway.record_visitante.juegos : null;
+      const predLV = predecir(rlHome, rvAway);
+
+      // Señal: diferencial crudo de carreras
+      const dcHome = (Number.isFinite(perfilHome.diferencial_carreras) &&
+        Number.isFinite(perfilHome.juegos_totales) && perfilHome.juegos_totales > 0)
+        ? perfilHome.diferencial_carreras / perfilHome.juegos_totales : null;
+      const dcAway = (Number.isFinite(perfilAway.diferencial_carreras) &&
+        Number.isFinite(perfilAway.juegos_totales) && perfilAway.juegos_totales > 0)
+        ? perfilAway.diferencial_carreras / perfilAway.juegos_totales : null;
+      const predDC = predecir(dcHome, dcAway);
+
+      // Criterio 1: Últimos 10 solo
+      registrar(contadores[NOMBRE_ULTIMOS10], predU10, ganadorReal);
+
+      // Criterio 2: Forma original (mínimo 2 de 3 votos coincidentes)
+      const prediccionesForma = [predU5, predU10, predLV];
+      registrar(contadores[NOMBRE_FORMA_ORIGINAL], votoMayoriaMinimoDos(prediccionesForma), ganadorReal);
+
+      // Criterio 3: Unanimidad de 6 señales independientes
+      const prediccionesSeis = [predPG, predU5, predU6, predU10, predLV, predDC];
+      registrar(contadores[NOMBRE_UNANIMIDAD], unanimidadSeis(prediccionesSeis), ganadorReal);
+    }
+
+    return {
+      contadores: contadores,
+      juegosConsiderados: segmento.length,
+      procesados: procesados,
+      sinHistorial: sinHistorial,
+      conError: conError
+    };
+  }
+
+  // ---------- Render ----------
+
+  function renderResumenGeneral(totalCache, totalValidas, corte) {
+    document.getElementById("resumenGeneral").innerHTML = `
+      <div class="bloque">
+        <p>Filas totales en caché: ${totalCache}</p>
+        <p>Filas estructuralmente válidas: ${totalValidas}</p>
+        <p>Corte 70/30 en índice: ${corte} de ${totalValidas}</p>
+      </div>
+    `;
+  }
+
+  function renderTramo(contenedorId, titulo, resultadoTramo) {
+    let filasHtml = "";
+
+    for (const nombre of [NOMBRE_ULTIMOS10, NOMBRE_FORMA_ORIGINAL, NOMBRE_UNANIMIDAD]) {
+      const contador = resultadoTramo.contadores[nombre];
+      const acierto = porcentajeAcierto(contador);
+      const cobertura = porcentajeCobertura(contador);
+
+      filasHtml += `
+        <tr>
+          <td>${nombre}</td>
+          <td>${contador.juegos_evaluados}</td>
+          <td>${contador.aciertos}</td>
+          <td>${contador.fallos}</td>
+          <td>${contador.empates_sin_senal}</td>
+          <td>${acierto === null ? "N/D" : acierto + "%"}</td>
+          <td>${cobertura === null ? "N/D" : cobertura + "%"}</td>
+        </tr>
+      `;
+    }
+
+    document.getElementById(contenedorId).innerHTML = `
+      <div class="bloque">
+        <h2>${titulo}</h2>
+        <p>Juegos considerados en el tramo: ${resultadoTramo.juegosConsiderados}</p>
+        <p class="ok">Juegos con perfiles confirmados: ${resultadoTramo.procesados}</p>
+        <p class="warn">Descartados por falta de historial previo: ${resultadoTramo.sinHistorial}</p>
+        <p class="${resultadoTramo.conError > 0 ? "no" : "ok"}">Errores de ejecución: ${resultadoTramo.conError}</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Criterio</th>
+              <th>Juegos</th>
+              <th>Aciertos</th>
+              <th>Fallos</th>
+              <th>Sin señal</th>
+              <th>% acierto</th>
+              <th>% cobertura</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filasHtml}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  // ---------- Ejecución principal ----------
+
+  function ejecutarValidacion() {
+    document.getElementById("log").textContent = "";
+    document.getElementById("resumenGeneral").innerHTML = "";
+    document.getElementById("tramoDesarrollo").innerHTML = "";
+    document.getElementById("tramoValidacion").innerHTML = "";
+
+    if (
+      typeof window.MLBPRO_CORE === "undefined" ||
+      typeof window.MLBPRO_CORE.leerHistoricoCache !== "function"
+    ) {
+      document.getElementById("resumenGeneral").innerHTML =
+        '<div class="bloque"><p class="no">ERROR: mlbpro-core.js no cargó o no expone leerHistoricoCache().</p></div>';
+      return;
+    }
+
+    if (typeof window.calcularFuerzaEquipo !== "function") {
+      document.getElementById("resumenGeneral").innerHTML =
+        '<div class="bloque"><p class="no">ERROR: fuerza-equipo.js no cargó o no expone calcularFuerzaEquipo().</p></div>';
+      return;
+    }
+
+    let filas;
+    try {
+      filas = window.MLBPRO_CORE.leerHistoricoCache();
+    } catch (error) {
+      filas = [];
+      log("Error leyendo histórico: " + (error?.message || String(error)));
+    }
+
+    if (!Array.isArray(filas)) filas = [];
+
+    const filasValidas = ordenarFilasCronologicamente(filas.filter(filaValida));
+    const total = filasValidas.length;
+
+    if (total === 0) {
+      document.getElementById("resumenGeneral").innerHTML =
+        '<div class="bloque"><p class="no">NO_CONFIRMADO: no hay filas estructuralmente válidas en el histórico.</p></div>';
+      return;
+    }
+
+    const corte = Math.floor(total * 0.7);
+    const desarrollo = filasValidas.slice(0, corte);
+    const validacion = filasValidas.slice(corte);
+
+    renderResumenGeneral(filas.length, total, corte);
+
+    const resultadoDesarrollo = evaluarTramo(desarrollo, filasValidas);
+    const resultadoValidacion = evaluarTramo(validacion, filasValidas);
+
+    renderTramo("tramoDesarrollo", "Tramo de desarrollo (70% inicial, más antiguo)", resultadoDesarrollo);
+    renderTramo("tramoValidacion", "Tramo de validación (30% final, más reciente)", resultadoValidacion);
+  }
+
+  window.ejecutarValidacion = ejecutarValidacion;
+})();
+</script>
+
+</body>
+</html>
