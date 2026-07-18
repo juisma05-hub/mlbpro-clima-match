@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fuerza de Equipo — Validación 70/30</title>
+<title>Fuerza de Equipo — Validación 70/30 (ventanas 6/9/10)</title>
 
 <style>
   body {
@@ -92,21 +92,33 @@ QUÉ ES:
     - Desarrollo:  primer 70% de las filas válidas (más antiguas).
     - Validación:  último 30% de las filas válidas (más recientes).
 
-  Mide, en cada tramo por separado, tres criterios:
+  Mide, en cada tramo por separado, la comparación de ventanas
+  recientes:
 
-    1. Últimos 10.
-    2. Forma original (Últimos 5 + Últimos 10 + Récord local/visitante),
-       por mayoría simple de esas tres señales.
-    3. Unanimidad de 6 señales independientes:
-       Porcentaje general, Últimos 5, Últimos 6, Últimos 10,
-       Récord local/visitante, Diferencial crudo de carreras.
+    1. Últimos 6.
+    2. Últimos 9.
+    3. Últimos 10.
+    4. Unanimidad de 6 señales independientes usando ventana
+       Últimos 9 (en vez de Últimos 10):
+         - Porcentaje general
+         - Últimos 5
+         - Últimos 6
+         - Últimos 9
+         - Récord local/visitante
+         - Diferencial crudo de carreras
+
+  Esta versión reemplaza la comparación anterior (Últimos 10 /
+  Forma original / Unanimidad con Últimos 10) por la comparación
+  de ventanas 6 vs 9 vs 10 que se pidió cerrar en esta ronda.
 
   No es un motor de predicción.
   No fija pesos.
-  No modifica mlbpro-core.js, fuerza-equipo.js ni
-  fuerza-equipo-backtest.html.
+  No modifica mlbpro-core.js ni fuerza-equipo.js.
   No conecta Moneyline, Coincidencia, F5, K6 ni clima.
   No escribe caché.
+  No corrige el tema de empates documentado en la auditoría previa
+  (juegos con homeRuns === awayRuns en la caché cruda de
+  fuerza-equipo.js); ese fix queda pendiente y fuera de este archivo.
 
 DEPENDENCIAS (no se modifican, se cargan tal cual):
   1. mlbpro-core.js
@@ -129,11 +141,18 @@ BLINDAJE HISTÓRICO:
   (para medir el desempeño), no cambia la regla de qué historial
   puede usar cada perfil.
 
-  Últimos 6 no lo expone fuerza-equipo.js directamente, así que esta
-  herramienta lo reconstruye por su cuenta desde la misma caché
-  histórica completa (MLBPRO_CORE.leerHistoricoCache()), con el mismo
-  criterio de fecha estrictamente anterior, igual que hace
-  fuerza-equipo-backtest.html.
+  Últimos 6, Últimos 9 y Últimos 10 se calculan TODOS de la misma
+  forma en este archivo (reconstrucción directa sobre la caché
+  histórica completa vía MLBPRO_CORE.leerHistoricoCache(), filtrada y
+  ordenada cronológicamente), para que la comparación entre las tres
+  ventanas sea una comparación justa sobre el mismo método de cálculo.
+  Ninguna de las tres usa el ultimos_10 que expone fuerza-equipo.js
+  internamente — eso evita mezclar dos implementaciones distintas de
+  "últimos N" dentro de la misma comparación.
+
+  Cada ventana usa exclusivamente juegos con fecha estrictamente
+  anterior a fechaCorte, igual criterio que fuerza-equipo-backtest.html
+  usaba para Últimos 6.
 
 CÓMO SE DIVIDE 70/30:
   1. Se leen todas las filas de MLBPRO_CORE.leerHistoricoCache().
@@ -150,20 +169,16 @@ CÓMO SE DIVIDE 70/30:
   límite adicional.
 
 CRITERIOS Y CÓMO SE VOTAN:
-  - Últimos 10: comparación directa Home vs Away. Si algún lado no
-    tiene señal (sin juegos, o empate exacto), no hay predicción para
-    ese juego con ese criterio → "sin señal".
+  - Últimos 6 / Últimos 9 / Últimos 10: comparación directa Home vs
+    Away sobre esa ventana. Si algún lado no tiene señal (sin
+    suficientes juegos previos, o empate exacto de porcentaje), no
+    hay predicción para ese juego con ese criterio → "sin señal".
 
-  - Forma original: mayoría simple entre Últimos 5, Últimos 10 y
-    Récord local/visitante. Si 2 de 3 coinciden, esa es la
-    predicción. Si hay empate 1-1 con una señal nula, o 0 señales
-    válidas, o empate de votos → "sin señal".
-
-  - Unanimidad de 6 señales independientes: requiere que las 6
-    señales (Porcentaje general, Últimos 5, Últimos 6, Últimos 10,
+  - Unanimidad de 6 señales (ventana Últimos 9): requiere que las 6
+    señales (Porcentaje general, Últimos 5, Últimos 6, Últimos 9,
     Récord L/V, Diferencial crudo) tengan valor Y coincidan TODAS en
-    el mismo lado. Si falta una sola señal, o no hay unanimidad total
-    → "sin señal" (no se cuenta como acierto ni como fallo).
+    el mismo lado. Si falta una sola señal, o no hay unanimidad
+    total → "sin señal" (no se cuenta como acierto ni como fallo).
 
 QUÉ MUESTRA POR TRAMO Y POR CRITERIO:
   - juegos evaluados
@@ -183,7 +198,9 @@ QUÉ TOCA:
 LIMITACIONES DOCUMENTADAS:
   - calcularFuerzaEquipo recorre el histórico completo por cada
     juego evaluado (O(n²)), igual que en fuerza-equipo-backtest.html.
-    Con cachés grandes esto puede tardar varios segundos.
+    Con cachés grandes esto puede tardar varios segundos. La
+    reconstrucción de Últimos 6/9/10 agrega recorridos adicionales
+    sobre la misma caché por cada equipo evaluado.
   - Si el total de filas válidas es muy bajo, el tramo de validación
     (30%) puede quedar con muy pocos juegos o ninguno; en ese caso se
     reporta con juegos = 0 y N/D en los porcentajes, sin inventar
@@ -191,16 +208,21 @@ LIMITACIONES DOCUMENTADAS:
   - Doubleheaders sin gamePk confiable heredan la misma limitación de
     orden ya documentada en fuerza-equipo.js y en
     fuerza-equipo-backtest.html.
+  - Empates exactos (homeRuns === awayRuns) en la caché cruda siguen
+    sin excluirse de los perfiles que construye fuerza-equipo.js
+    (porcentaje general, récord L/V, diferencial), tal como se
+    documentó en la auditoría previa. Este archivo no lo corrige.
 ============================================================
 -->
 
-<h1>Fuerza de Equipo — Validación 70/30</h1>
+<h1>Fuerza de Equipo — Validación 70/30 (ventanas 6/9/10)</h1>
 
 <p>
   Divide el histórico cronológicamente: 70% inicial (desarrollo) y
-  30% final (validación). Mide Últimos 10, Forma original y
-  Unanimidad de 6 señales en cada tramo, usando siempre solo partidos
-  con fecha estrictamente anterior al juego evaluado.
+  30% final (validación). Compara Últimos 6, Últimos 9 y Últimos 10,
+  más Unanimidad de 6 señales usando Últimos 9, en cada tramo, usando
+  siempre solo partidos con fecha estrictamente anterior al juego
+  evaluado.
 </p>
 
 <button type="button" onclick="ejecutarValidacion()">
@@ -219,11 +241,10 @@ LIMITACIONES DOCUMENTADAS:
 (function () {
   "use strict";
 
+  const NOMBRE_ULTIMOS6 = "Últimos 6";
+  const NOMBRE_ULTIMOS9 = "Últimos 9";
   const NOMBRE_ULTIMOS10 = "Últimos 10";
-  const NOMBRE_FORMA_ORIGINAL =
-    "Forma original (Últimos 5 + Últimos 10 + Récord L/V)";
-  const NOMBRE_UNANIMIDAD =
-    "Unanimidad (6 señales independientes)";
+  const NOMBRE_UNANIMIDAD9 = "Unanimidad (6 señales, ventana Últimos 9)";
 
   // ---------- Utilidades de fecha / validación de filas ----------
   // (idénticas en criterio a fuerza-equipo.js / fuerza-equipo-backtest.html)
@@ -304,8 +325,9 @@ LIMITACIONES DOCUMENTADAS:
 
   // Últimos N para un equipo, calculado directamente sobre la caché
   // completa de filas válidas, usando exclusivamente juegos con
-  // fecha estrictamente anterior a fechaCorte. Igual criterio que
-  // fuerza-equipo-backtest.html para Últimos 6.
+  // fecha estrictamente anterior a fechaCorte. Se usa igual para 6,
+  // 9 y 10 para que la comparación entre ventanas sea justa (mismo
+  // método de cálculo para las tres).
   function calcularVentanaEquipo(equipo, fechaCorte, cantidad, filasValidasOrdenadas) {
     if (typeof equipo !== "string" || equipo.trim().length === 0) return null;
 
@@ -320,7 +342,7 @@ LIMITACIONES DOCUMENTADAS:
 
     const ultimos = juegosEquipo.slice(-cantidad);
 
-    if (ultimos.length === 0) return null;
+    if (ultimos.length < cantidad) return null;
 
     let ganados = 0;
     let perdidos = 0;
@@ -348,19 +370,6 @@ LIMITACIONES DOCUMENTADAS:
     if (!Number.isFinite(valorHome) || !Number.isFinite(valorAway)) return null;
     if (valorHome === valorAway) return null;
     return valorHome > valorAway ? "home" : "away";
-  }
-
-  // Forma original exige mínimo 2 de 3 votos coincidentes (Últimos5,
-  // Últimos10, Récord L/V). Con una sola señal válida (ej. ["home",
-  // null, null]) NO hay predicción: se devuelve null. Esto evita que
-  // una sola señal disponible se cuente como si fuera mayoría.
-  function votoMayoriaMinimoDos(predicciones) {
-    const votosHome = predicciones.filter(function (p) { return p === "home"; }).length;
-    const votosAway = predicciones.filter(function (p) { return p === "away"; }).length;
-
-    if (votosHome >= 2) return "home";
-    if (votosAway >= 2) return "away";
-    return null;
   }
 
   function unanimidadSeis(predicciones) {
@@ -405,9 +414,10 @@ LIMITACIONES DOCUMENTADAS:
 
   function evaluarTramo(segmento, filasValidasCompleto) {
     const contadores = {};
+    contadores[NOMBRE_ULTIMOS6] = nuevoContador();
+    contadores[NOMBRE_ULTIMOS9] = nuevoContador();
     contadores[NOMBRE_ULTIMOS10] = nuevoContador();
-    contadores[NOMBRE_FORMA_ORIGINAL] = nuevoContador();
-    contadores[NOMBRE_UNANIMIDAD] = nuevoContador();
+    contadores[NOMBRE_UNANIMIDAD9] = nuevoContador();
 
     let procesados = 0;
     let sinHistorial = 0;
@@ -439,14 +449,14 @@ LIMITACIONES DOCUMENTADAS:
       const perfilHome = resultado.home;
       const perfilAway = resultado.away;
 
-      // Señal: porcentaje general
+      // Señal: porcentaje general (de fuerza-equipo.js)
       const pgHome = Number.isFinite(perfilHome.porcentaje_victorias)
         ? perfilHome.porcentaje_victorias / 100 : null;
       const pgAway = Number.isFinite(perfilAway.porcentaje_victorias)
         ? perfilAway.porcentaje_victorias / 100 : null;
       const predPG = predecir(pgHome, pgAway);
 
-      // Señal: últimos 5
+      // Señal: últimos 5 (de fuerza-equipo.js)
       const u5Home = (perfilHome.ultimos_5 && perfilHome.ultimos_5.juegos > 0 &&
         Number.isFinite(perfilHome.ultimos_5.ganados))
         ? perfilHome.ultimos_5.ganados / perfilHome.ultimos_5.juegos : null;
@@ -455,23 +465,26 @@ LIMITACIONES DOCUMENTADAS:
         ? perfilAway.ultimos_5.ganados / perfilAway.ultimos_5.juegos : null;
       const predU5 = predecir(u5Home, u5Away);
 
-      // Señal: últimos 6 (reconstruido, no lo expone fuerza-equipo.js)
+      // Ventanas reconstruidas (mismo método para 6, 9 y 10)
       const v6Home = calcularVentanaEquipo(row.home, fechaCorte, 6, filasValidasCompleto);
       const v6Away = calcularVentanaEquipo(row.away, fechaCorte, 6, filasValidasCompleto);
       const u6Home = v6Home && Number.isFinite(v6Home.porcentaje) ? v6Home.porcentaje : null;
       const u6Away = v6Away && Number.isFinite(v6Away.porcentaje) ? v6Away.porcentaje : null;
       const predU6 = predecir(u6Home, u6Away);
 
-      // Señal: últimos 10
-      const u10Home = (perfilHome.ultimos_10 && perfilHome.ultimos_10.juegos > 0 &&
-        Number.isFinite(perfilHome.ultimos_10.ganados))
-        ? perfilHome.ultimos_10.ganados / perfilHome.ultimos_10.juegos : null;
-      const u10Away = (perfilAway.ultimos_10 && perfilAway.ultimos_10.juegos > 0 &&
-        Number.isFinite(perfilAway.ultimos_10.ganados))
-        ? perfilAway.ultimos_10.ganados / perfilAway.ultimos_10.juegos : null;
+      const v9Home = calcularVentanaEquipo(row.home, fechaCorte, 9, filasValidasCompleto);
+      const v9Away = calcularVentanaEquipo(row.away, fechaCorte, 9, filasValidasCompleto);
+      const u9Home = v9Home && Number.isFinite(v9Home.porcentaje) ? v9Home.porcentaje : null;
+      const u9Away = v9Away && Number.isFinite(v9Away.porcentaje) ? v9Away.porcentaje : null;
+      const predU9 = predecir(u9Home, u9Away);
+
+      const v10Home = calcularVentanaEquipo(row.home, fechaCorte, 10, filasValidasCompleto);
+      const v10Away = calcularVentanaEquipo(row.away, fechaCorte, 10, filasValidasCompleto);
+      const u10Home = v10Home && Number.isFinite(v10Home.porcentaje) ? v10Home.porcentaje : null;
+      const u10Away = v10Away && Number.isFinite(v10Away.porcentaje) ? v10Away.porcentaje : null;
       const predU10 = predecir(u10Home, u10Away);
 
-      // Señal: récord local/visitante correspondiente
+      // Señal: récord local/visitante correspondiente (de fuerza-equipo.js)
       const rlHome = (perfilHome.record_local && perfilHome.record_local.juegos > 0 &&
         Number.isFinite(perfilHome.record_local.ganados))
         ? perfilHome.record_local.ganados / perfilHome.record_local.juegos : null;
@@ -480,7 +493,7 @@ LIMITACIONES DOCUMENTADAS:
         ? perfilAway.record_visitante.ganados / perfilAway.record_visitante.juegos : null;
       const predLV = predecir(rlHome, rvAway);
 
-      // Señal: diferencial crudo de carreras
+      // Señal: diferencial crudo de carreras (de fuerza-equipo.js)
       const dcHome = (Number.isFinite(perfilHome.diferencial_carreras) &&
         Number.isFinite(perfilHome.juegos_totales) && perfilHome.juegos_totales > 0)
         ? perfilHome.diferencial_carreras / perfilHome.juegos_totales : null;
@@ -489,16 +502,18 @@ LIMITACIONES DOCUMENTADAS:
         ? perfilAway.diferencial_carreras / perfilAway.juegos_totales : null;
       const predDC = predecir(dcHome, dcAway);
 
-      // Criterio 1: Últimos 10 solo
+      // Criterio 1: Últimos 6 solo
+      registrar(contadores[NOMBRE_ULTIMOS6], predU6, ganadorReal);
+
+      // Criterio 2: Últimos 9 solo
+      registrar(contadores[NOMBRE_ULTIMOS9], predU9, ganadorReal);
+
+      // Criterio 3: Últimos 10 solo
       registrar(contadores[NOMBRE_ULTIMOS10], predU10, ganadorReal);
 
-      // Criterio 2: Forma original (mínimo 2 de 3 votos coincidentes)
-      const prediccionesForma = [predU5, predU10, predLV];
-      registrar(contadores[NOMBRE_FORMA_ORIGINAL], votoMayoriaMinimoDos(prediccionesForma), ganadorReal);
-
-      // Criterio 3: Unanimidad de 6 señales independientes
-      const prediccionesSeis = [predPG, predU5, predU6, predU10, predLV, predDC];
-      registrar(contadores[NOMBRE_UNANIMIDAD], unanimidadSeis(prediccionesSeis), ganadorReal);
+      // Criterio 4: Unanimidad de 6 señales, con ventana Últimos 9
+      const prediccionesSeisConNueve = [predPG, predU5, predU6, predU9, predLV, predDC];
+      registrar(contadores[NOMBRE_UNANIMIDAD9], unanimidadSeis(prediccionesSeisConNueve), ganadorReal);
     }
 
     return {
@@ -525,7 +540,7 @@ LIMITACIONES DOCUMENTADAS:
   function renderTramo(contenedorId, titulo, resultadoTramo) {
     let filasHtml = "";
 
-    for (const nombre of [NOMBRE_ULTIMOS10, NOMBRE_FORMA_ORIGINAL, NOMBRE_UNANIMIDAD]) {
+    for (const nombre of [NOMBRE_ULTIMOS6, NOMBRE_ULTIMOS9, NOMBRE_ULTIMOS10, NOMBRE_UNANIMIDAD9]) {
       const contador = resultadoTramo.contadores[nombre];
       const acierto = porcentajeAcierto(contador);
       const cobertura = porcentajeCobertura(contador);
