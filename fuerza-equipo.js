@@ -42,12 +42,45 @@
        confirmado,
        estado,
        fecha_corte,
+       ventana_reciente: "ULTIMOS_10",
        home,
        away,
        score_home: null,
        score_away: null,
+       senal_unanimidad,
+       confirmado_unanimidad,
+       detalle_unanimidad,
        nota
      }
+
+     ventana_reciente
+       string constante "ULTIMOS_10". Documenta cuál ventana reciente
+       se usa como oficial para la señal de unanimidad. No cambia
+       según los datos — es una etiqueta fija.
+
+     senal_unanimidad
+       "home" | "away" | null. Solo vale "home" o "away" cuando las
+       tres señales de unanimidad (récord general, récord
+       local/visitante correspondiente, y últimos 10 con ventana
+       OFICIAL completa de 10 juegos) tienen valor para ambos equipos
+       Y coinciden las tres en el mismo lado. Si falta una señal o no
+       hay coincidencia total, es null.
+
+     confirmado_unanimidad
+       boolean. true solo cuando las tres señales de unanimidad
+       tienen valor para home y away — es decir, hubo datos
+       suficientes para evaluar unanimidad, coincidan o no entre sí.
+       No indica que la señal sea unánime, solo que se pudo evaluar
+       con datos completos. Si es false, senal_unanimidad es
+       necesariamente null.
+
+     detalle_unanimidad
+       object. Desglose de las tres señales usadas para la
+       unanimidad — record_general, record_local_visitante,
+       ultimos_10 — cada una con {home, away, prediccion}. El bloque
+       de ultimos_10 además incluye ventana_completa (boolean) que
+       indica si AMBOS equipos tenían la ventana oficial de 10 juegos
+       reales (no una ventana parcial de menos juegos).
 
    LIMITACIÓN DOCUMENTADA — DOUBLEHEADERS:
      La caché histórica guarda gamePk y date, pero no necesariamente
@@ -68,6 +101,8 @@
      - No inventa pesos.
      - No inventa valores neutrales.
      - No normaliza nombres de equipos.
+     - No corrige (todavía) el caso de juegos con homeRuns === awayRuns
+       en la caché cruda; ese comportamiento queda igual que antes.
    ============================================================ */
 
 (function (root) {
@@ -153,6 +188,12 @@
       porcentaje_victorias: null,
 
       ultimos_5: {
+        juegos: 0,
+        ganados: null,
+        perdidos: null
+      },
+
+      ultimos_6: {
         juegos: 0,
         ganados: null,
         perdidos: null
@@ -452,6 +493,7 @@
         +(ganados / juegosTotales * 100).toFixed(1),
 
       ultimos_5: contarUltimos(5),
+      ultimos_6: contarUltimos(6),
       ultimos_10: contarUltimos(10),
 
       racha_actual: {
@@ -491,6 +533,174 @@
     };
   }
 
+  // ---------- Señal de unanimidad (récord general, local/visitante,
+  // últimos 10 con ventana oficial completa) ----------
+
+  function fraccionDeRecord(record) {
+    if (
+      !record ||
+      !Number.isFinite(record.juegos) ||
+      record.juegos <= 0
+    ) {
+      return null;
+    }
+
+    if (!Number.isFinite(record.ganados)) {
+      return null;
+    }
+
+    return record.ganados / record.juegos;
+  }
+
+  function prediccionEntreValores(valorHome, valorAway) {
+    if (
+      !Number.isFinite(valorHome) ||
+      !Number.isFinite(valorAway)
+    ) {
+      return null;
+    }
+
+    if (valorHome === valorAway) {
+      return null;
+    }
+
+    return valorHome > valorAway ? "home" : "away";
+  }
+
+  // Ventana OFICIAL de últimos 10: solo cuenta si el equipo tiene
+  // realmente 10 juegos previos (no una ventana parcial de menos
+  // juegos). Esto no cambia lo que devuelve ultimos_10 en el perfil
+  // (eso sigue igual, con lo que haya disponible) — solo controla
+  // qué se considera válido para la señal de unanimidad.
+  function fraccionUltimos10Oficial(perfil) {
+    const ultimos10 = perfil?.ultimos_10;
+
+    if (!ultimos10 || ultimos10.juegos !== 10) {
+      return null;
+    }
+
+    return fraccionDeRecord(ultimos10);
+  }
+
+  function calcularSenalUnanimidad(perfilHome, perfilAway) {
+    // Señal 1: récord general (porcentaje de victorias)
+    const recordGeneralHome = Number.isFinite(perfilHome.porcentaje_victorias)
+      ? perfilHome.porcentaje_victorias / 100
+      : null;
+
+    const recordGeneralAway = Number.isFinite(perfilAway.porcentaje_victorias)
+      ? perfilAway.porcentaje_victorias / 100
+      : null;
+
+    const prediccionRecordGeneral = prediccionEntreValores(
+      recordGeneralHome,
+      recordGeneralAway
+    );
+
+    // Señal 2: récord local (home) contra récord visitante (away)
+    const localHome = fraccionDeRecord(perfilHome.record_local);
+    const visitanteAway = fraccionDeRecord(perfilAway.record_visitante);
+
+    const prediccionLocalVisitante = prediccionEntreValores(
+      localHome,
+      visitanteAway
+    );
+
+    // Señal 3: últimos 10, exigiendo ventana oficial completa (10
+    // juegos reales para AMBOS equipos)
+    const ultimos10Home = fraccionUltimos10Oficial(perfilHome);
+    const ultimos10Away = fraccionUltimos10Oficial(perfilAway);
+
+    const prediccionUltimos10 = prediccionEntreValores(
+      ultimos10Home,
+      ultimos10Away
+    );
+
+    const ventanaCompleta =
+      perfilHome?.ultimos_10?.juegos === 10 &&
+      perfilAway?.ultimos_10?.juegos === 10;
+
+    const detalle = {
+      record_general: {
+        home: recordGeneralHome,
+        away: recordGeneralAway,
+        prediccion: prediccionRecordGeneral
+      },
+
+      record_local_visitante: {
+        home: localHome,
+        away: visitanteAway,
+        prediccion: prediccionLocalVisitante
+      },
+
+      ultimos_10: {
+        home: ultimos10Home,
+        away: ultimos10Away,
+        prediccion: prediccionUltimos10,
+        ventana_completa: ventanaCompleta
+      }
+    };
+
+    const predicciones = [
+      prediccionRecordGeneral,
+      prediccionLocalVisitante,
+      prediccionUltimos10
+    ];
+
+    // confirmado_unanimidad depende de que las TRES señales hayan
+    // tenido datos suficientes para evaluarse (ambos lados con
+    // valor numérico real: récord general, récord local/visitante,
+    // y ventana oficial completa de últimos 10) — sin importar si
+    // esa evaluación terminó en empate. Un empate (prediccion null
+    // por valorHome === valorAway) con datos completos SÍ cuenta
+    // como confirmado; solo la falta de datos (valor no finito) lo
+    // vuelve false.
+    const datosSuficientesRecordGeneral =
+      Number.isFinite(recordGeneralHome) &&
+      Number.isFinite(recordGeneralAway);
+
+    const datosSuficientesLocalVisitante =
+      Number.isFinite(localHome) &&
+      Number.isFinite(visitanteAway);
+
+    const datosSuficientesUltimos10 =
+      Number.isFinite(ultimos10Home) &&
+      Number.isFinite(ultimos10Away);
+
+    const confirmadoUnanimidad =
+      datosSuficientesRecordGeneral &&
+      datosSuficientesLocalVisitante &&
+      datosSuficientesUltimos10;
+
+    // senal_unanimidad sigue exigiendo que las tres predicciones
+    // existan (sin empate) Y coincidan en el mismo lado. Esto es
+    // independiente de confirmado_unanimidad: puede haber datos
+    // completos (confirmado_unanimidad true) y aun así ningún
+    // ganador unánime (senal_unanimidad null) si alguna señal
+    // empató o si no coinciden entre sí.
+    let senal = null;
+
+    if (
+      predicciones.every(function (prediccion) {
+        return prediccion === "home";
+      })
+    ) {
+      senal = "home";
+    } else if (
+      predicciones.every(function (prediccion) {
+        return prediccion === "away";
+      })
+    ) {
+      senal = "away";
+    }
+
+    return {
+      senal_unanimidad: senal,
+      confirmado_unanimidad: confirmadoUnanimidad,
+      detalle_unanimidad: detalle
+    };
+  }
+
   function tieneMLBProCore() {
     return (
       typeof root !== "undefined" &&
@@ -510,12 +720,17 @@
         confirmado: false,
         estado: "NO_CONFIRMADO",
         fecha_corte: fechaCorteISO || null,
+        ventana_reciente: "ULTIMOS_10",
 
         home: null,
         away: null,
 
         score_home: null,
         score_away: null,
+
+        senal_unanimidad: null,
+        confirmado_unanimidad: false,
+        detalle_unanimidad: null,
 
         nota:
           "MLBPRO_CORE no está disponible. Cargue " +
@@ -528,12 +743,17 @@
         confirmado: false,
         estado: "NO_CONFIRMADO",
         fecha_corte: fechaCorteISO || null,
+        ventana_reciente: "ULTIMOS_10",
 
         home: null,
         away: null,
 
         score_home: null,
         score_away: null,
+
+        senal_unanimidad: null,
+        confirmado_unanimidad: false,
+        detalle_unanimidad: null,
 
         nota:
           "fechaCorteISO inválida. Se espera formato " +
@@ -608,6 +828,11 @@
       }
     }
 
+    const resultadoUnanimidad = calcularSenalUnanimidad(
+      perfilHome,
+      perfilAway
+    );
+
     return {
       confirmado: confirmado,
       estado: confirmado
@@ -615,12 +840,17 @@
         : "NO_CONFIRMADO",
 
       fecha_corte: fechaCorteISO,
+      ventana_reciente: "ULTIMOS_10",
 
       home: perfilHome,
       away: perfilAway,
 
       score_home: null,
       score_away: null,
+
+      senal_unanimidad: resultadoUnanimidad.senal_unanimidad,
+      confirmado_unanimidad: resultadoUnanimidad.confirmado_unanimidad,
+      detalle_unanimidad: resultadoUnanimidad.detalle_unanimidad,
 
       nota: nota
     };
