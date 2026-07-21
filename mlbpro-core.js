@@ -1,22 +1,93 @@
 /* ============================================================
    PRÓLOGO — mlbpro-core.js
    ============================================================
-   (sin cambios respecto a la pasada anterior, salvo esta entrada)
+   (ver historial completo de correcciones abajo; este bloque resume
+   solo lo vigente)
 
-   SEXTA PASADA (21 jul 2026) — auditoría de cruce de fecha local:
-   - Cada punto de getTrayectoriaVientoHistorico() ahora incluye
-     fechaLocalUsada (YYYY-MM-DD) y claveLocalUsada (el string exacto
-     "YYYY-MM-DDTHH:00" que se usó para buscar el dato en Open-Meteo).
-     Antes solo se devolvía horaLocalUsada (0-23), que por sí sola no
-     alcanza para saber si dos puntos con la misma hora (ej. 23h y 01h
-     del día siguiente, que NO son la misma hora, pero podrían
-     confundirse) pertenecen a fechas locales distintas. Con estos dos
-     campos nuevos, quien consuma la trayectoria puede detectar un
-     cruce de medianoche local comparando fechaLocalUsada entre los 7
-     puntos, sin tener que reimplementar ningún cálculo de fecha/hora.
-   - No se tocó ninguna otra lógica: BRISA_RANGO_GRADOS=30,
-     BRISA_RANGO_APROBADO=false, mediaCircularClasificacion y
-     desviacionMaximaClasificacion (ya aprobados) siguen igual.
+   QUÉ ES:
+     Fuente ÚNICA de verdad para fecha/hora en zona horaria de MLB,
+     rutas de API (MLB Stats API + Open-Meteo vía proxy), fetch
+     helpers, umbrales de coincidencia, gate de "juego Final", y la
+     trayectoria de viento de 7 horas por juego histórico.
+
+   DE QUÉ DEPENDE:
+     estadios.js debe cargar ANTES (stadiumGet().timezone).
+
+   API relevante a esta pasada:
+     getTrayectoriaVientoHistorico(lat, lon, gameDate, venueNombre)
+       → Promise<trayectoria|null>.
+
+       Cada uno de los 7 puntos (offsets -2,-1,0,+1,+2,+3,+4) ahora
+       incluye direccionConfiable: boolean (windMph !== null && windMph
+       >= VELOCIDAD_MINIMA_DIRECCION_CONFIABLE). Con viento casi calmo,
+       un anemómetro puede reportar una dirección que gira mucho sin
+       que eso sea una brisa real cambiante — este campo lo señala por
+       punto, para auditoría, sin decidir nada por sí solo.
+
+       CLASIFICACIÓN — regla aprobada por Perez (21 jul 2026), en este
+       orden estricto sobre los 5 puntos de juego (0,+1,+2,+3,+4):
+         1) Si a CUALQUIERA de los 5 le falta windFromDeg o windMph
+            real → "NO_CONFIRMADO".
+         2) Si los 5 tienen dato completo, pero CUALQUIERA tiene
+            windMph < VELOCIDAD_MINIMA_DIRECCION_CONFIABLE (3 mph) →
+            "DIRECCION_NO_CONFIABLE". No se calcula media circular ni
+            desviación con esos datos — se declara explícitamente que
+            la dirección no es confiable a esa velocidad, en vez de
+            forzar un veredicto (ni estable ni cambiante) con evidencia
+            débil.
+         3) Solo si los 5 tienen dato completo Y los 5 con windMph ≥ 3
+            → se calcula media circular (vectorial) + desviación
+            angular máxima (sin suma acumulada de giros) → 
+            "BRISA_ESTABLE" (≤ BRISA_RANGO_GRADOS) o "BRISA_CAMBIANTE"
+            (> BRISA_RANGO_GRADOS).
+       NO_CONFIRMADO y DIRECCION_NO_CONFIABLE son estados DISTINTOS:
+       el primero es "falta el dato", el segundo es "el dato existe
+       pero no es físicamente confiable a esa velocidad". Nunca se
+       confunden ni se colapsan en uno solo.
+
+       BRISA_RANGO_GRADOS = 30 → Perez lo ve razonable como punto de
+       partida (confirmado en la prueba corta: Wrigley con viento real
+       dio desviación 5.6°, bien dentro de rango). Sigue marcado
+       rangoAprobado: false formalmente hasta reconstruir el histórico
+       completo con esta regla ya validada.
+
+   QUÉ TOCA:
+     localStorage, SOLO vía guardarHistoricoCache()/leerHistoricoCache()/
+     borrarHistoricoCache(). Esta pasada no llama a ninguna de esas —
+     getTrayectoriaVientoHistorico() sigue siendo de solo lectura.
+
+   HISTORIAL DE CORRECCIONES (21 jul 2026):
+   1) Zona horaria real por parque en getClimaHistorico().
+   2) Fecha local del parque + validación numérica real en
+      getClimaHistorico(). PROBADO Y APROBADO: 1,520 filas, 4/4 zonas
+      PASS.
+   3) Trayectoria de viento de 7 horas (getTrayectoriaVientoHistorico),
+      función nueva.
+   4) Clasificación restringida a offsets 0,+1,+2,+3,+4; direccionInicio
+      corregido a offset 0; BRISA_RANGO_GRADOS marcado explícitamente
+      como no aprobado.
+   5) fechaLocalUsada y claveLocalUsada agregados a cada punto (permite
+      auditar cruce de medianoche local sin reimplementar cálculo en
+      otro archivo).
+   6) ESTA PASADA — viento casi calmo: se agregó direccionConfiable por
+      punto y el estado DIRECCION_NO_CONFIABLE, con la regla de 3 pasos
+      descrita arriba. Confirmado con casos reales de la prueba corta:
+      Chase Field (mínimo 1.3 mph) y Dodger Stadium (mínimo 1 mph), que
+      antes salían BRISA_CAMBIANTE por una desviación angular grande a
+      velocidad casi nula, ahora salen DIRECCION_NO_CONFIABLE.
+
+   ESTADO:
+     Zona horaria/fecha local → PROBADO Y APROBADO (1,520 filas, 4/4
+     zonas PASS). Trayectoria de 7 horas + clasificación con viento
+     casi calmo → lógica aprobada por Perez, pendiente de correr la
+     prueba corta actualizada (Toronto en bucket ET, búsqueda
+     obligatoria de cruce de medianoche) antes de decidir integrar a
+     jalarHistorico2026() y reconstruir el histórico completo (~1,500
+     filas). BRISA_RANGO_GRADOS=30 visto como razonable pero
+     rangoAprobado sigue en false formalmente.
+
+   FECHA:
+     21 jul 2026.
    ============================================================ */
 
 window.MLBPRO_CORE = (function () {
@@ -35,6 +106,11 @@ window.MLBPRO_CORE = (function () {
 
   const BRISA_RANGO_GRADOS = 30;
   const BRISA_RANGO_APROBADO = false;
+
+  // Umbral aprobado por Perez (21 jul 2026): por debajo de esta
+  // velocidad, la dirección de viento no se considera confiable para
+  // decidir BRISA_ESTABLE/CAMBIANTE.
+  const VELOCIDAD_MINIMA_DIRECCION_CONFIABLE = 3;
 
   function viaProxy(url) {
     return PROXY + encodeURIComponent(url);
@@ -269,13 +345,16 @@ window.MLBPRO_CORE = (function () {
       return {
         offsetHoras: ho,
         horaLocalUsada: horaLocal,
-        // NUEVO en esta pasada — permite auditar cruce de medianoche
-        // local sin reimplementar cálculo de fecha en otro archivo.
         fechaLocalUsada: fechaLocal,
         claveLocalUsada: clave,
         windFromDeg: windDirRaw,
         windToDeg: windDirRaw !== null ? (windDirRaw + 180) % 360 : null,
-        windMph: windMphRaw
+        windMph: windMphRaw,
+        // NUEVO en esta pasada — true solo si hay windMph real y es
+        // >= VELOCIDAD_MINIMA_DIRECCION_CONFIABLE. Con viento casi
+        // calmo, la dirección puede girar mucho sin representar una
+        // brisa real cambiante.
+        direccionConfiable: windMphRaw !== null && windMphRaw >= VELOCIDAD_MINIMA_DIRECCION_CONFIABLE
       };
     });
 
@@ -291,20 +370,33 @@ window.MLBPRO_CORE = (function () {
       : null;
 
     const puntosClasificacion = puntos.filter(p => OFFSETS_CLASIFICACION.includes(p.offsetHoras));
-    const direccionesClasificacion = puntosClasificacion
-      .filter(p => p.windFromDeg !== null)
-      .map(p => p.windFromDeg);
 
+    // Regla de 3 pasos aprobada por Perez (21 jul 2026):
     let clasificacion = "NO_CONFIRMADO";
     let mediaCircularClasificacion = null;
     let desviacionMaximaClasificacion = null;
 
-    if (direccionesClasificacion.length === OFFSETS_CLASIFICACION.length) {
-      mediaCircularClasificacion = promedioCircular(direccionesClasificacion);
-      desviacionMaximaClasificacion = Math.max(
-        ...direccionesClasificacion.map(g => diferenciaAngular(g, mediaCircularClasificacion))
-      );
-      clasificacion = desviacionMaximaClasificacion <= BRISA_RANGO_GRADOS ? "BRISA_ESTABLE" : "BRISA_CAMBIANTE";
+    // Paso 1: los 5 puntos de juego deben tener dirección Y velocidad reales.
+    const datosCompletos = puntosClasificacion.every(p => p.windFromDeg !== null && p.windMph !== null);
+
+    if (datosCompletos) {
+      // Paso 2: si cualquiera está por debajo del umbral de velocidad,
+      // la dirección no es confiable — no se calcula nada, se declara así.
+      const todosConfiables = puntosClasificacion.every(p => p.windMph >= VELOCIDAD_MINIMA_DIRECCION_CONFIABLE);
+
+      if (!todosConfiables) {
+        clasificacion = "DIRECCION_NO_CONFIABLE";
+      } else {
+        // Paso 3: los 5 con dato completo y velocidad confiable — se
+        // calcula media circular y desviación máxima, sin suma
+        // acumulada de giros.
+        const direccionesClasificacion = puntosClasificacion.map(p => p.windFromDeg);
+        mediaCircularClasificacion = promedioCircular(direccionesClasificacion);
+        desviacionMaximaClasificacion = Math.max(
+          ...direccionesClasificacion.map(g => diferenciaAngular(g, mediaCircularClasificacion))
+        );
+        clasificacion = desviacionMaximaClasificacion <= BRISA_RANGO_GRADOS ? "BRISA_ESTABLE" : "BRISA_CAMBIANTE";
+      }
     }
 
     return {
@@ -321,7 +413,8 @@ window.MLBPRO_CORE = (function () {
       desviacionMaximaClasificacion: desviacionMaximaClasificacion,
       clasificacion: clasificacion,
       rangoGradosUsado: BRISA_RANGO_GRADOS,
-      rangoAprobado: BRISA_RANGO_APROBADO
+      rangoAprobado: BRISA_RANGO_APROBADO,
+      velocidadMinimaDireccionConfiable: VELOCIDAD_MINIMA_DIRECCION_CONFIABLE
     };
   }
 
