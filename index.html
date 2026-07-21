@@ -63,11 +63,16 @@ button:disabled{opacity:.5}
      archivos/pantallas (fuera de index.html).
 
    ORDEN DE CARGA (no cambiar, cada uno depende del anterior):
-     1. estadios.js               (stadiumNorm(), stadiumCanonName()
-                                    globales — comparación canónica de
-                                    parques)
+     1. estadios.js               (stadiumNorm(), stadiumCanonName(),
+                                    stadiumGet() globales — comparación
+                                    canónica de parques Y, desde esta
+                                    corrección, fuente del timezone real
+                                    que mlbpro-core.js necesita para
+                                    getClimaHistorico())
      2. parques-orientacion.js    (getOrientacionParque global)
-     3. mlbpro-core.js            (window.MLBPRO_CORE)
+     3. mlbpro-core.js            (window.MLBPRO_CORE — AHORA depende
+                                    de 1 para resolver timezone por
+                                    parque; antes no dependía de nada)
      4. roof-status.js            (window.MLBPRO_ROOF_STATUS)
      5. mlbpro-viento.js          (window.MLBPRO_VIENTO — usa 1, 2 y 4)
      6. confidence-panel.js       (window.MLBPRO_CONFIDENCE_PANEL — usa 3 y 4)
@@ -83,7 +88,9 @@ button:disabled{opacity:.5}
                    ACTUAL de hoy por juego. NO tiene carreras/score —
                    nunca se usa para meter ruido de "en vivo" al cálculo.
      historico2026 → array de filas históricas (mismo shape que se
-                   guarda en localStorage vía MLBPRO_CORE).
+                   guarda en localStorage vía MLBPRO_CORE, más los tres
+                   campos de auditoría de timezone agregados en esta
+                   corrección — ver más abajo).
 
    VALIDACIÓN DE NÚMEROS (esNumeroReal):
      safe(x) y todas las comprobaciones de windDir/totalRuns/totalKs
@@ -97,14 +104,18 @@ button:disabled{opacity:.5}
    BOTONES → FUNCIÓN → QUÉ HACE:
      "JALAR JUEGOS DE HOY"        → jalarJuegosHoy()
        Llena juegosHoy y climaHoy con datos EN VIVO de hoy (solo clima
-       actual, nunca marcador). Pinta tarjetas simples.
+       actual, nunca marcador). Pinta tarjetas simples. SIN CAMBIOS en
+       esta corrección (getClimaActual no tiene el bug de timezone).
      "JALAR HISTÓRICO 2026"       → jalarHistorico2026()
        Recorre día por día desde CORE.START_HIST hasta CORE.ayerISO()
        (nunca incluye HOY — así un juego en curso nunca puede colarse).
        Por cada juego del día, exige CORE.esJuegoFinal(g) === true
        antes de pedir boxscore y guardarlo. Escribe en localStorage
        vía CORE.guardarHistoricoCache(). Reanuda desde donde quedó si
-       ya hay cache (no repite fechas ya guardadas).
+       ya hay cache (no repite fechas ya guardadas). CORREGIDO 21 jul
+       2026: ahora le pasa el nombre del parque a CORE.getClimaHistorico()
+       para que resuelva el timezone real de ESE parque — antes no lo
+       pasaba y la función asumía America/New_York para todos.
      "CALCULAR COINCIDENCIA"      → calcularCoincidencia()
        Compara climaHoy contra historico2026 con VIENTO.scoreMatch().
        Requiere haber jalado juegos de hoy Y histórico primero.
@@ -118,7 +129,14 @@ button:disabled{opacity:.5}
        directo) y vacía historico2026 en memoria SOLO si el borrado
        devolvió true. Si CORE.borrarHistoricoCache() devuelve false,
        muestra error y NO afirma que se borró. Después hay que volver
-       a tocar "JALAR HISTÓRICO 2026" para reconstruirlo.
+       a tocar "JALAR HISTÓRICO 2026" para reconstruirlo. IMPORTANTE
+       tras esta corrección: como el shape de la fila histórica cambió
+       (se agregaron 3 campos de auditoría de timezone), lo más limpio
+       es borrar el cache viejo y reconstruirlo desde cero para que
+       TODAS las filas tengan timezone corregido — filas viejas
+       guardadas con la lógica anterior (ET fijo) van a seguir en el
+       cache tal cual quedaron hasta que se borren y se vuelvan a
+       jalar.
 
    FUNCIONES INTERNAS CLAVE — QUÉ RECIBEN / QUÉ DEVUELVEN:
      escenaAbierta(today) → string. Etiqueta de techo SOLO para
@@ -162,24 +180,42 @@ button:disabled{opacity:.5}
        de la clave cambia algún día, solo hay que tocarlo en un lugar).
      - Nueva comparación de parque → stadiumNorm(stadiumCanonName(...))
        en ambos lados, nunca comparar el string crudo de venue.
+     - Nueva hora local de parque → CORE.getClimaHistorico() ya resuelve
+       esto internamente vía stadiumGet(); ningún archivo nuevo debe
+       reimplementar su propia conversión de timezone por parque.
 
-   FECHA:
-     13 jul 2026.
+   CORRECCIÓN 21 jul 2026 — zona horaria real del histórico:
+   - jalarHistorico2026() ahora llama a
+     CORE.getClimaHistorico(coords.lat, coords.lon, d, g.gameDate,
+     g.venue?.name || venueFull?.name) — el quinto argumento
+     (nombre del parque) es nuevo. Antes se llamaba sin ese argumento
+     y la función asumía America/New_York para cualquier parque.
+   - Si CORE.getClimaHistorico() devuelve null (parque o timezone no
+     confirmados), el comportamiento NO cambió: el juego se salta
+     (saltados++) igual que ya pasaba antes cuando faltaba cualquier
+     otro dato — no se agregó ningún caso nuevo de manejo de error,
+     solo una razón nueva por la que null puede ocurrir.
+   - Las filas nuevas del histórico ahora incluyen, además de los
+     campos de siempre, timezoneUsado, horaLocalObjetivo y
+     horaClimaUtilizada (vienen ya armados dentro de "clima" —
+     ver el objeto que devuelve CORE.getClimaHistorico()). Se agregan
+     tal cual al registro que se guarda, sin tocar ningún campo
+     existente — Coincidencia (VIENTO.scoreMatch) sigue leyendo
+     exactamente los mismos campos de antes.
+   - NO se agregó "trayectoria de siete horas" ni ninguna lógica nueva
+     de rango horario en esta corrección — eso queda pendiente para
+     otra tarea, tal como se pidió.
 
    ESTADO:
      NO_CONFIRMADO — correcciones aplicadas por lectura de código.
-     Pendiente de prueba real que confirme: (a) orden de carga correcto
-     con estadios.js primero, (b) que la brújula ya no rota con 45°
-     inventado y muestra "ORIENTACIÓN NO CONFIRMADA" cuando corresponde,
-     (c) que esNumeroReal rechaza null/""/espacios/booleanos en los
-     campos afectados, (d) que la comparación de parque por
-     stadiumNorm(stadiumCanonName()) sigue agrupando el mismo parque
-     que antes, (e) que ya no aparece F5 en ningún texto visual, (f)
-     que "BORRAR CACHE HISTÓRICO" usa CORE.borrarHistoricoCache() y
-     muestra error real si devuelve false, y (g) que histCount y la
-     lista de "Similares históricos" priorizan de verdad TODOS los
-     históricos del mismo parque antes de completar con otros parques,
-     sin cortar a 5 antes de esa priorización.
+     Pendiente de prueba real que confirme, ADEMÁS de lo que ya estaba
+     pendiente de la corrección anterior: (h) que JALAR HISTÓRICO 2026
+     no tira 404 de Open-Meteo para ningún parque, (i) que la consola
+     queda limpia, (j) que al menos un parque de cada zona horaria
+     (Este, Central, Mountain/Phoenix, Pacífico) muestra su hora local
+     correcta en los campos de auditoría nuevos, y (k) que ya no
+     aparecen demasiados juegos con la misma dirección de viento
+     repetida en parques fuera de la zona Este.
    ============================================================ */
 const CORE = window.MLBPRO_CORE;
 const VIENTO = window.MLBPRO_VIENTO;
@@ -328,9 +364,15 @@ async function jalarHistorico2026() {
         } catch (e) { saltados++; continue; }
         if (!coords) { saltados++; continue; }
 
+        // CORREGIDO 21 jul 2026: se agrega el nombre del parque como
+        // quinto argumento, para que getClimaHistorico() resuelva su
+        // timezone real (vía stadiumGet en estadios.js) en vez de
+        // asumir America/New_York para todos los parques.
+        const nombreParque = g.venue?.name || venueFull?.name;
+
         let clima = null;
         try {
-          clima = await CORE.getClimaHistorico(coords.lat, coords.lon, d, g.gameDate);
+          clima = await CORE.getClimaHistorico(coords.lat, coords.lon, d, g.gameDate, nombreParque);
         } catch (e) { saltados++; continue; }
         if (!clima) { saltados++; continue; }
 
@@ -354,6 +396,10 @@ async function jalarHistorico2026() {
           precip: clima.precip,
           windMph: clima.windMph,
           windDir: clima.windDir,
+          // Campos de auditoría nuevos — no reemplazan nada de arriba.
+          timezoneUsado: clima.timezoneUsado,
+          horaLocalObjetivo: clima.horaLocalObjetivo,
+          horaClimaUtilizada: clima.horaClimaUtilizada,
           awayRuns: box.awayRuns,
           homeRuns: box.homeRuns,
           totalRuns: box.awayRuns + box.homeRuns,
