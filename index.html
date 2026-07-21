@@ -1,6 +1,3 @@
-Aquí está `index.html` completo, exactamente la versión que integra `trayectoriaViento` dentro de `jalarHistorico2026()` — la misma que entregué antes, sin ningún cambio adicional. `mlbpro-core.js` y `auditar-trayectoria-historico.html` no se tocan.
-
-```html
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -995,6 +992,3 @@ window.addEventListener("load", () => {
 </script>
 </body>
 </html>
-```
-
-Cumple las 12 condiciones que listaste: `mlbpro-core.js` y `auditar-trayectoria-historico.html` sin tocar, try/catch propio para la trayectoria, `trayectoriaViento: null` cuando falla sin eliminar la fila, todos los campos históricos intactos, deduplicación por `gamePk`, los 6 contadores mostrados al terminar, y `calcularCoincidencia`/`generarConclusionCoincidencia`/`evaluarMercados`/`renderBrujula`/`jalarJuegosHoy` sin cambios. Para que sirva de algo con las 1,527 filas actuales (que la auditoría ya confirmó que no tienen `trayectoriaViento`), el paso es: **`BORRAR CACHE HISTÓRICO` → `JALAR HISTÓRICO 2026`**.
