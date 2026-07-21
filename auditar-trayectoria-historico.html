@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLBPro · Auditoría Trayectoria de Viento (histórico)</title>
+<style>
+body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:16px;color:#f5c518;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin-bottom:12px}
+button{width:100%;padding:15px;margin:6px 0;font-size:15px;font-weight:800;color:#000;background:#f5c518;border:none;border-radius:12px}
+#estado{margin:12px 0;font-size:13px;color:#9ad}
+.bloque{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+.tit{font-size:15px;font-weight:800;color:#fff;margin-bottom:8px}
+.fila{font-size:13px;color:#ddd;margin:3px 0;display:flex;justify-content:space-between;gap:8px}
+.fila b{color:#fff}
+.ok{color:#32d74b;font-weight:800}
+.mid{color:#ffd60a;font-weight:800}
+.bad{color:#ff453a;font-weight:800}
+.small{font-size:12px;color:#aaa;margin-top:5px}
+.match{margin-top:8px;padding:8px;border-radius:8px;background:#111;border:1px solid #333}
+.hist{margin-top:8px;border-top:1px solid #222;padding-top:8px}
+</style>
+</head>
+<body>
+<h1>MLBPro · Auditoría de Trayectoria de Viento (histórico ya guardado)</h1>
+<div class="sub">Solo lectura — no hace fetch, no modifica caché, no borra nada. Solo lee CORE.leerHistoricoCache().</div>
+
+<a href="index.html" style="display:inline-block;margin-bottom:10px;color:#79c0ff;font-size:13px;text-decoration:none;">← Volver a Coincidencia climática</a>
+
+<button onclick="auditar()">🔎 AUDITAR HISTÓRICO GUARDADO</button>
+
+<div id="estado">Listo.</div>
+<div id="lista"></div>
+
+<script src="estadios.js"></script>
+<script src="mlbpro-core.js"></script>
+
+<script>
+/* ============================================================
+   PRÓLOGO — auditar-trayectoria-historico.html
+   ============================================================
+   QUÉ ES:
+     Página nueva, standalone, de SOLO LECTURA para auditar el estado
+     real del histórico ya guardado en localStorage respecto al campo
+     trayectoriaViento agregado por jalarHistorico2026() (index.html).
+
+   QUÉ NO HACE (a propósito):
+     No hace ningún fetch a MLB StatsAPI ni a Open-Meteo. No llama a
+     CORE.getClimaHistorico() ni a CORE.getTrayectoriaVientoHistorico().
+     No escribe, modifica ni borra localStorage bajo ninguna
+     circunstancia — usa ÚNICAMENTE CORE.leerHistoricoCache() (lectura
+     pura). No es reconstructora ni reparadora: solo diagnostica lo que
+     ya existe.
+
+   DE QUÉ DEPENDE:
+     estadios.js (cargado antes, aunque esta página no llama a
+     stadiumGet() directamente — se mantiene el orden de carga
+     establecido para todo el proyecto) y mlbpro-core.js (para
+     CORE.leerHistoricoCache() y CORE.CACHE_HIST). No carga
+     parques-orientacion.js, roof-status.js, mlbpro-viento.js,
+     confidence-panel.js, game-cards.js ni mlb-climate-match.js — no
+     los necesita para nada de lo que hace esta página.
+
+   CORRECCIÓN 21 jul 2026 (esta pasada) — bug real encontrado por Perez:
+     Faltaba "const CORE = window.MLBPRO_CORE;" antes de las funciones.
+     auditar() llamaba a CORE.leerHistoricoCache() sin que CORE
+     estuviera definido en esta página — tiraba
+     "ReferenceError: CORE is not defined" apenas se tocaba el botón.
+     Corregido: se agregó la línea justo después de este prólogo, antes
+     de function setEstado(). No se tocó nada más del archivo.
+
+   QUÉ MUESTRA (botón "🔎 AUDITAR HISTÓRICO GUARDADO"):
+     Conteos agregados:
+       - Filas totales.
+       - Filas con trayectoriaViento como objeto real (no null, campo
+         presente).
+       - Filas con trayectoriaViento: null (campo presente, valor null
+         — la llamada falló o no devolvió datos, pero la fila se guardó
+         de todas formas por tener clima y boxscore válidos).
+       - Filas ANTIGUAS donde el campo trayectoriaViento ni siquiera
+         existe (guardadas antes de esta corrección).
+       - Cantidad BRISA_ESTABLE / BRISA_CAMBIANTE /
+         DIRECCION_NO_CONFIABLE / NO_CONFIRMADO (sobre las filas con
+         objeto).
+       - Otros valores de clasificacion no reconocidos (si aparecieran,
+         se listan tal cual, sin asumir a qué categoría pertenecen).
+       - Zonas horarias (timezoneUsado) encontradas, con su conteo.
+       - Filas con exactamente 7 puntos vs. filas con menos de 7 (y,
+         si aparecen, más de 7 — reportado aparte, no se descarta como
+         "menos de 7").
+       - Filas cuyo array offsets es exactamente [-2,-1,0,1,2,3,4] vs.
+         filas con offsets distintos.
+       - Filas cuyo array offsetsClasificacion es exactamente
+         [0,1,2,3,4] vs. filas con un array distinto.
+       - Filas donde direccionInicio es un número real.
+       - Filas donde direccionFinal es un número real.
+       - Filas donde TODOS los puntos traen fechaLocalUsada.
+       - Filas donde TODOS los puntos traen claveLocalUsada.
+       - Filas donde TODOS los puntos traen direccionConfiable como
+         booleano real (true o false, no undefined).
+
+     Tarjetas de ejemplo (una por cada estado que realmente aparezca en
+     el histórico — si un estado no aparece, se dice explícitamente que
+     no se encontró ningún ejemplo, nunca se inventa uno):
+       - BRISA_ESTABLE
+       - BRISA_CAMBIANTE
+       - DIRECCION_NO_CONFIABLE
+       - NO_CONFIRMADO
+       - null (trayectoriaViento: null — la tarjeta muestra que no hay
+         puntos disponibles, en vez de fabricarlos)
+     Cada tarjeta muestra: fecha, juego (away @ home), parque, timezone
+     (si aplica), y — cuando hay objeto — los 7 puntos con offset,
+     clave local exacta, dirección, velocidad, direccionConfiable, y la
+     clasificación final del juego.
+
+   ESTADO:
+     NO_CONFIRMADO — corregido el bug de CORE indefinido, pero la
+     página en sí todavía no se ha ejecutado contra el histórico real.
+     Depende de que Perez primero ejecute jalarHistorico2026() (en
+     index.html, tras BORRAR CACHE HISTÓRICO para forzar reconstrucción
+     completa) para que existan filas con trayectoriaViento que
+     auditar; si el histórico actual (1,520 filas) todavía no se
+     reconstruyó con la integración nueva, esta auditoría va a mostrar
+     1,520 filas "antiguas" (campo ni siquiera existe) y 0 con objeto o
+     null — eso sería el resultado ESPERADO y correcto en ese caso, no
+     un error.
+
+   FECHA:
+     21 jul 2026.
+   ============================================================ */
+const CORE = window.MLBPRO_CORE;
+
+function setEstado(t) { document.getElementById("estado").textContent = t; }
+function render(html) { document.getElementById("lista").innerHTML = html; }
+
+function esNumeroReal(v) {
+  if (v === null || v === undefined || v === "") return false;
+  if (typeof v === "boolean") return false;
+  if (typeof v === "string" && v.trim() === "") return false;
+  return Number.isFinite(Number(v));
+}
+
+function arraysIguales(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
+function todosLosPuntosTienen(puntos, campo, validador) {
+  if (!Array.isArray(puntos) || puntos.length === 0) return false;
+  return puntos.every(p => validador(p ? p[campo] : undefined));
+}
+
+function claseClasificacion(c) {
+  if (c === "BRISA_ESTABLE") return "ok";
+  if (c === "BRISA_CAMBIANTE") return "bad";
+  if (c === "DIRECCION_NO_CONFIABLE" || c === "NO_CONFIRMADO") return "mid";
+  return "mid";
+}
+
+function tarjetaEjemplo(titulo, row) {
+  if (!row) {
+    return `
+      <div class="bloque">
+        <div class="tit">${titulo}</div>
+        <div class="bad">No se encontró ningún ejemplo real de este estado en el histórico actual.</div>
+      </div>
+    `;
+  }
+
+  const t = row.trayectoriaViento;
+
+  if (t === null || t === undefined) {
+    return `
+      <div class="bloque">
+        <div class="tit">${titulo}</div>
+        <div class="fila"><span>Fecha</span><b>${row.date ?? "N/C"}</b></div>
+        <div class="fila"><span>Juego</span><b>${(row.away ?? "?")} @ ${(row.home ?? "?")}</b></div>
+        <div class="fila"><span>Parque</span><b>${row.venue ?? "N/C"}</b></div>
+        <div class="small">trayectoriaViento: null — sin puntos disponibles (la llamada falló o no devolvió datos, pero la fila se guardó igual por tener clima y boxscore válidos).</div>
+      </div>
+    `;
+  }
+
+  const puntosHtml = Array.isArray(t.puntos)
+    ? t.puntos.map(p => `
+        <div class="small">
+          offset ${p.offsetHoras >= 0 ? "+" + p.offsetHoras : p.offsetHoras}h ·
+          clave ${p.claveLocalUsada ?? "N/C"} ·
+          fecha local ${p.fechaLocalUsada ?? "N/C"} ·
+          viene de ${p.windFromDeg ?? "N/C"}° · va hacia ${p.windToDeg ?? "N/C"}° ·
+          ${p.windMph ?? "N/C"} mph ·
+          direccionConfiable: ${typeof p.direccionConfiable === "boolean" ? p.direccionConfiable : "N/C"}
+        </div>
+      `).join("")
+    : "<div class='bad'>Sin array de puntos.</div>";
+
+  return `
+    <div class="bloque">
+      <div class="tit">${titulo}</div>
+      <div class="fila"><span>Fecha</span><b>${row.date ?? "N/C"}</b></div>
+      <div class="fila"><span>Juego</span><b>${(row.away ?? "?")} @ ${(row.home ?? "?")}</b></div>
+      <div class="fila"><span>Parque</span><b>${row.venue ?? "N/C"}</b></div>
+      <div class="fila"><span>Timezone</span><b>${t.timezoneUsado ?? "N/C"}</b></div>
+      <div class="match">
+        ${puntosHtml}
+      </div>
+      <div class="fila" style="margin-top:6px"><span>Clasificación</span><b class="${claseClasificacion(t.clasificacion)}">${t.clasificacion ?? "N/C"}</b></div>
+    </div>
+  `;
+}
+
+function auditar() {
+  try {
+    setEstado("Leyendo histórico desde localStorage (solo lectura)...");
+    render("");
+
+    const hist = CORE.leerHistoricoCache();
+
+    if (!hist.length) {
+      render(`<div class="bloque"><div class="bad">El histórico está vacío. No hay nada que auditar.</div></div>`);
+      setEstado("Histórico vacío.");
+      return;
+    }
+
+    let filasConObjeto = 0;
+    let filasConNull = 0;
+    let filasSinCampo = 0;
+
+    let brisaEstable = 0;
+    let brisaCambiante = 0;
+    let direccionNoConfiable = 0;
+    let noConfirmado = 0;
+    const otrosValores = {};
+
+    const zonasHorarias = {};
+
+    let con7Puntos = 0;
+    let conMenos7Puntos = 0;
+    let conMas7Puntos = 0;
+
+    let offsetsCorrectos = 0;
+    let offsetsIncorrectos = 0;
+
+    let offsetsClasifCorrectos = 0;
+    let offsetsClasifIncorrectos = 0;
+
+    let conDireccionInicio = 0;
+    let conDireccionFinal = 0;
+    let conFechaLocalUsadaEnTodos = 0;
+    let conClaveLocalUsadaEnTodos = 0;
+    let conDireccionConfiableEnTodos = 0;
+
+    const ejemplos = {
+      BRISA_ESTABLE: null,
+      BRISA_CAMBIANTE: null,
+      DIRECCION_NO_CONFIABLE: null,
+      NO_CONFIRMADO: null,
+      NULL: null
+    };
+
+    const OFFSETS_ESPERADOS = [-2, -1, 0, 1, 2, 3, 4];
+    const OFFSETS_CLASIF_ESPERADOS = [0, 1, 2, 3, 4];
+
+    hist.forEach(row => {
+      const tieneCampo = Object.prototype.hasOwnProperty.call(row, "trayectoriaViento");
+
+      if (!tieneCampo) {
+        filasSinCampo++;
+        return;
+      }
+
+      const t = row.trayectoriaViento;
+
+      if (t === null) {
+        filasConNull++;
+        if (!ejemplos.NULL) ejemplos.NULL = row;
+        return;
+      }
+
+      filasConObjeto++;
+
+      const c = t.clasificacion;
+      if (c === "BRISA_ESTABLE") { brisaEstable++; if (!ejemplos.BRISA_ESTABLE) ejemplos.BRISA_ESTABLE = row; }
+      else if (c === "BRISA_CAMBIANTE") { brisaCambiante++; if (!ejemplos.BRISA_CAMBIANTE) ejemplos.BRISA_CAMBIANTE = row; }
+      else if (c === "DIRECCION_NO_CONFIABLE") { direccionNoConfiable++; if (!ejemplos.DIRECCION_NO_CONFIABLE) ejemplos.DIRECCION_NO_CONFIABLE = row; }
+      else if (c === "NO_CONFIRMADO") { noConfirmado++; if (!ejemplos.NO_CONFIRMADO) ejemplos.NO_CONFIRMADO = row; }
+      else {
+        const clave = String(c);
+        otrosValores[clave] = (otrosValores[clave] || 0) + 1;
+      }
+
+      const tz = t.timezoneUsado || "SIN_TIMEZONE";
+      zonasHorarias[tz] = (zonasHorarias[tz] || 0) + 1;
+
+      const puntos = Array.isArray(t.puntos) ? t.puntos : [];
+      if (puntos.length === 7) con7Puntos++;
+      else if (puntos.length < 7) conMenos7Puntos++;
+      else conMas7Puntos++;
+
+      if (arraysIguales(t.offsets, OFFSETS_ESPERADOS)) offsetsCorrectos++;
+      else offsetsIncorrectos++;
+
+      if (arraysIguales(t.offsetsClasificacion, OFFSETS_CLASIF_ESPERADOS)) offsetsClasifCorrectos++;
+      else offsetsClasifIncorrectos++;
+
+      if (esNumeroReal(t.direccionInicio)) conDireccionInicio++;
+      if (esNumeroReal(t.direccionFinal)) conDireccionFinal++;
+
+      if (todosLosPuntosTienen(puntos, "fechaLocalUsada", v => typeof v === "string" && v.length > 0)) conFechaLocalUsadaEnTodos++;
+      if (todosLosPuntosTienen(puntos, "claveLocalUsada", v => typeof v === "string" && v.length > 0)) conClaveLocalUsadaEnTodos++;
+      if (todosLosPuntosTienen(puntos, "direccionConfiable", v => typeof v === "boolean")) conDireccionConfiableEnTodos++;
+    });
+
+    const zonasHtml = Object.keys(zonasHorarias).sort().map(tz =>
+      `<div class="fila"><span>${tz}</span><b>${zonasHorarias[tz]}</b></div>`
+    ).join("") || "<div class='small'>Ninguna (sin filas con objeto).</div>";
+
+    const otrosValoresHtml = Object.keys(otrosValores).length
+      ? Object.keys(otrosValores).map(k => `<div class="fila"><span>"${k}" (inesperado)</span><b class="bad">${otrosValores[k]}</b></div>`).join("")
+      : "<div class='small'>Ninguno — todas las clasificaciones encontradas son las 4 esperadas.</div>";
+
+    let html = `
+      <div class="bloque">
+        <div class="tit">Resumen general</div>
+        <div class="fila"><span>Filas totales en histórico</span><b>${hist.length}</b></div>
+        <div class="fila"><span>Con objeto trayectoriaViento</span><b class="ok">${filasConObjeto}</b></div>
+        <div class="fila"><span>Con trayectoriaViento: null</span><b class="mid">${filasConNull}</b></div>
+        <div class="fila"><span>Filas antiguas (campo ni existe)</span><b class="bad">${filasSinCampo}</b></div>
+      </div>
+
+      <div class="bloque">
+        <div class="tit">Clasificación (sobre filas con objeto)</div>
+        <div class="fila"><span>BRISA_ESTABLE</span><b class="ok">${brisaEstable}</b></div>
+        <div class="fila"><span>BRISA_CAMBIANTE</span><b class="bad">${brisaCambiante}</b></div>
+        <div class="fila"><span>DIRECCION_NO_CONFIABLE</span><b class="mid">${direccionNoConfiable}</b></div>
+        <div class="fila"><span>NO_CONFIRMADO</span><b class="mid">${noConfirmado}</b></div>
+        <div class="small" style="margin-top:6px">Otros valores inesperados:</div>
+        ${otrosValoresHtml}
+      </div>
+
+      <div class="bloque">
+        <div class="tit">Zonas horarias encontradas (timezoneUsado)</div>
+        ${zonasHtml}
+      </div>
+
+      <div class="bloque">
+        <div class="tit">Estructura de los 7 puntos</div>
+        <div class="fila"><span>Filas con exactamente 7 puntos</span><b class="ok">${con7Puntos}</b></div>
+        <div class="fila"><span>Filas con menos de 7 puntos</span><b class="bad">${conMenos7Puntos}</b></div>
+        <div class="fila"><span>Filas con más de 7 puntos (anómalo)</span><b class="bad">${conMas7Puntos}</b></div>
+        <div class="fila"><span>Offsets exactos [-2,-1,0,1,2,3,4]</span><b class="ok">${offsetsCorrectos}</b></div>
+        <div class="fila"><span>Offsets distintos a lo esperado</span><b class="bad">${offsetsIncorrectos}</b></div>
+        <div class="fila"><span>offsetsClasificacion exactos [0,1,2,3,4]</span><b class="ok">${offsetsClasifCorrectos}</b></div>
+        <div class="fila"><span>offsetsClasificacion distintos</span><b class="bad">${offsetsClasifIncorrectos}</b></div>
+      </div>
+
+      <div class="bloque">
+        <div class="tit">Campos por punto / resumen</div>
+        <div class="fila"><span>Filas con direccionInicio (número real)</span><b>${conDireccionInicio}</b></div>
+        <div class="fila"><span>Filas con direccionFinal (número real)</span><b>${conDireccionFinal}</b></div>
+        <div class="fila"><span>Filas con fechaLocalUsada en los 7 puntos</span><b>${conFechaLocalUsadaEnTodos}</b></div>
+        <div class="fila"><span>Filas con claveLocalUsada en los 7 puntos</span><b>${conClaveLocalUsadaEnTodos}</b></div>
+        <div class="fila"><span>Filas con direccionConfiable (booleano) en los 7 puntos</span><b>${conDireccionConfiableEnTodos}</b></div>
+      </div>
+
+      <div class="bloque"><div class="tit">Tarjetas de ejemplo — una por cada estado encontrado</div></div>
+    `;
+
+    html += tarjetaEjemplo("Ejemplo: BRISA_ESTABLE", ejemplos.BRISA_ESTABLE);
+    html += tarjetaEjemplo("Ejemplo: BRISA_CAMBIANTE", ejemplos.BRISA_CAMBIANTE);
+    html += tarjetaEjemplo("Ejemplo: DIRECCION_NO_CONFIABLE", ejemplos.DIRECCION_NO_CONFIABLE);
+    html += tarjetaEjemplo("Ejemplo: NO_CONFIRMADO", ejemplos.NO_CONFIRMADO);
+    html += tarjetaEjemplo("Ejemplo: trayectoriaViento null", ejemplos.NULL);
+
+    render(html);
+    setEstado("Auditoría completa: " + hist.length + " fila(s) leídas de localStorage.");
+  } catch (e) {
+    setEstado("ERROR REAL en auditar(): " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
