@@ -53,130 +53,79 @@ button:disabled{opacity:.5}
    ============================================================
    QUÉ ES:
      Pantalla principal. Jala juegos de hoy + clima, construye/lee el
-     histórico 2026, calcula coincidencia climática, y arma la
-     conclusión con veredicto de mercados (carreras/ponches) y la
-     brújula visual de viento por parque. Incluye además una prueba
-     corta, de solo lectura, para auditar la trayectoria de viento de
-     7 horas antes de integrarla al histórico completo.
+     histórico 2026, calcula coincidencia climática, arma la conclusión
+     con veredicto de mercados y brújula, y ofrece una prueba corta de
+     solo lectura para auditar la trayectoria de viento de 7 horas
+     antes de integrarla al histórico completo.
 
-   QUÉ NO HACE (alcance actual, a propósito):
-     No calcula ni muestra F5, MoneyLine ni K6. No integra todavía
-     trayectoriaViento dentro de jalarHistorico2026() ni del histórico
-     guardado — eso es un paso futuro, pendiente de que se apruebe el
-     rango angular de clasificación (BRISA_RANGO_GRADOS, ver
-     mlbpro-core.js).
+   QUÉ NO HACE (a propósito, todavía):
+     No integra trayectoriaViento dentro de jalarHistorico2026() ni del
+     histórico guardado — pendiente de que Perez corra esta prueba
+     corta actualizada y decida si el rango de 30° / la regla de viento
+     casi calmo quedan listos para reconstruir el histórico completo
+     (~1,500 filas).
 
-   ORDEN DE CARGA (no cambiar, cada uno depende del anterior):
-     1. estadios.js               (stadiumNorm(), stadiumCanonName(),
-                                    stadiumGet() globales — comparación
-                                    canónica de parques y fuente del
-                                    timezone real que mlbpro-core.js
-                                    necesita)
-     2. parques-orientacion.js    (getOrientacionParque global)
-     3. mlbpro-core.js            (window.MLBPRO_CORE — depende de 1)
-     4. roof-status.js            (window.MLBPRO_ROOF_STATUS)
-     5. mlbpro-viento.js          (window.MLBPRO_VIENTO — usa 1, 2 y 4)
-     6. confidence-panel.js       (window.MLBPRO_CONFIDENCE_PANEL — usa 3 y 4)
-     7. game-cards.js             (window.MLBPRO_GAME_CARDS — cargado, NO invocado)
-     8. mlb-climate-match.js      (window.MLBClimateRoutes — shim, NO invocado)
-     9. este script inline        (usa 1 directo para comparar venue en
-                                    generarConclusionCoincidencia, y usa
-                                    2 y 4 directo en renderBrujula/evaluarMercados)
+   ORDEN DE CARGA (no cambiar):
+     1. estadios.js  2. parques-orientacion.js  3. mlbpro-core.js
+     4. roof-status.js  5. mlbpro-viento.js  6. confidence-panel.js
+     7. game-cards.js  8. mlb-climate-match.js  9. este script inline
 
-   ESTADO GLOBAL (vive solo mientras la pestaña esté abierta):
-     juegosHoy   → array de juegos crudos de MLB Stats API de hoy.
-     climaHoy    → objeto {gamePk: {tempF,windMph,windDir,...}} clima
-                   ACTUAL de hoy por juego.
-     historico2026 → array de filas históricas (mismo shape que se
-                   guarda en localStorage vía MLBPRO_CORE, incluyendo
-                   los campos de auditoría de timezone de la corrección
-                   anterior). Todavía NO incluye trayectoriaViento —
-                   eso es intencional, ver "PROBAR TRAYECTORIA DE
-                   VIENTO" abajo.
+   BOTONES → FUNCIÓN → QUÉ HACE (solo se documenta lo relevante a esta
+   pasada; el resto no cambió):
 
-   VALIDACIÓN DE NÚMEROS (esNumeroReal):
-     safe(x) y todas las comprobaciones de windDir/totalRuns/totalKs
-     de este archivo usan esNumeroReal(v), NO Number.isFinite(Number(v))
-     a secas. esNumeroReal(v) descarta explícitamente null, undefined,
-     "", strings de solo espacios y booleanos ANTES de convertir.
-
-   BOTONES → FUNCIÓN → QUÉ HACE:
-     "JALAR JUEGOS DE HOY"        → jalarJuegosHoy()
-       Sin cambios en ninguna corrección.
-     "JALAR HISTÓRICO 2026"       → jalarHistorico2026()
-       Sin cambios respecto a la versión ya probada y aprobada (pasa
-       nombreParque a CORE.getClimaHistorico() para timezone real).
-       NO llama todavía a CORE.getTrayectoriaVientoHistorico() — esa
-       integración queda pendiente de que se apruebe el rango angular.
      "🧪 PROBAR TRAYECTORIA DE VIENTO" → probarTrayectoriaViento()
-       NUEVO en esta corrección. Prueba corta, de SOLO LECTURA: recorre
-       el calendario real desde CORE.START_HIST buscando juegos Final
-       reales, hasta reunir un mínimo configurable (por defecto 2) de
-       juegos con trayectoria CONFIRMADA (clasificacion distinta de
-       "NO_CONFIRMADO") en cada una de 4 zonas horarias: America/
-       New_York (ET), America/Chicago (Central), America/Phoenix o
-       America/Denver (Mountain, agrupadas juntas), y America/
-       Los_Angeles (Pacific). Los juegos con clasificacion ===
-       "NO_CONFIRMADO" o sin trayectoria van a una lista de rechazados
-       aparte — NUNCA se cuentan como "confirmados". Muestra, por cada
-       juego: los 7 puntos con su claveLocalUsada exacta, cuáles
-       cuentan para la clasificación (0,+1,+2,+3,+4), si hay cruce de
-       fecha local (comparando fechaLocalUsada entre los 7 puntos),
-       dirección inicio/final, velocidad min/máx/prom, media circular,
-       desviación máxima y la clasificación resultante. Pre-filtra sin
-       red (usando stadiumGet() directo, antes de gastar una llamada a
-       Open-Meteo) los juegos de una zona que ya cumplió su cuota,
-       para no desperdiciar llamadas. Tiene dos topes de seguridad
-       (días escaneados y juegos procesados) para no correr indefinido
-       si alguna zona no aparece en el rango de fechas disponible.
-       NO TOCA localStorage, NO TOCA historico2026, NO llama a
-       jalarHistorico2026() ni a guardarHistoricoCache() — es
-       puramente de auditoría/inspección.
-     "CALCULAR COINCIDENCIA"      → calcularCoincidencia()
-       Sin cambios.
-     "CONCLUSIÓN DE COINCIDENCIA" → generarConclusionCoincidencia()
-       Sin cambios.
-     "BORRAR CACHE HISTÓRICO"     → borrarCacheHistorico()
-       Sin cambios.
+       Prueba corta, SOLO LECTURA. Dos fases:
 
-   FUNCIONES INTERNAS CLAVE:
-     escenaAbierta(), evaluarMercados(), renderBrujula() → sin cambios,
-     ver corrección anterior para el detalle completo de cada una.
+       FASE 1 — cuota por zona horaria: busca un mínimo (por defecto 2)
+       de juegos con trayectoria "confirmada" en 4 buckets: ET
+       (America/New_York Y America/Toronto — CORREGIDO en esta pasada,
+       antes Toronto cayeron en "otras zonas" por error), Central
+       (America/Chicago), Mountain (America/Phoenix o America/Denver),
+       Pacific (America/Los_Angeles). "Confirmada" = clasificacion
+       distinta de "NO_CONFIRMADO" (BRISA_ESTABLE, BRISA_CAMBIANTE o
+       DIRECCION_NO_CONFIABLE cuentan como confirmada — todas son
+       resultados reales con dato completo, solo NO_CONFIRMADO es
+       "falta el dato" y va a rechazados).
 
-   QUÉ TOCA:
-     DOM: #estado, #lista. localStorage: vía MLBPRO_CORE únicamente,
-     y SOLO desde jalarHistorico2026()/borrarCacheHistorico() — 
-     probarTrayectoriaViento() no toca localStorage bajo ninguna
-     circunstancia.
+       FASE 2 — cruce de medianoche OBLIGATORIO (NUEVO en esta pasada):
+       después de completar (o agotar el intento de) la fase 1, sigue
+       escaneando el calendario, en un loop aparte con sus propios
+       topes de seguridad, hasta encontrar AL MENOS UN juego real cuyos
+       7 puntos tengan más de una fechaLocalUsada distinta (cruce real
+       de medianoche local del parque). Se muestra en un panel
+       obligatorio separado. Si no aparece ninguno dentro del rango
+       escaneado, se reporta así tal cual — nunca se fabrica un caso
+       sintético para simular que la prueba "pasó".
 
-   CORRECCIÓN 21 jul 2026 (esta pasada) — prueba corta de trayectoria
-   de viento por zona horaria:
-   - Se agregó UN botón nuevo ("🧪 PROBAR TRAYECTORIA DE VIENTO") y UNA
-     función nueva (probarTrayectoriaViento()). No se duplicó ninguna
-     versión anterior de esta función ni quedó ningún fragmento suelto.
-   - Se eliminó por completo la referencia rota a
-     BRISA_RANGO_GRADOS_MOSTRAR() (intentaba acceder a una constante
-     privada del closure de mlbpro-core.js, que no está expuesta en
-     window.MLBPRO_CORE). El rango angular usado se lee directamente
-     del campo rangoGradosUsado que ya viene en cada objeto de
-     trayectoria devuelto por CORE.getTrayectoriaVientoHistorico().
+       Por cada juego muestra, además de lo ya existente: los 7 puntos
+       con claveLocalUsada exacta y direccionConfiable (marcando si esa
+       velocidad es < 3 mph), la clasificación resultante con su nueva
+       posibilidad DIRECCION_NO_CONFIABLE, y sigue sin tocar
+       localStorage, historico2026 ni jalarHistorico2026() bajo ninguna
+       circunstancia.
+
+     Todos los demás botones: sin cambios respecto a la versión ya
+     probada y aprobada.
+
+   CORRECCIÓN 21 jul 2026 (esta pasada):
+   - bucketDeTz() reconoce America/Toronto como parte de ET.
+   - Clasificación ahora puede salir DIRECCION_NO_CONFIABLE (viene ya
+     calculada por mlbpro-core.js) — se muestra con su propio color y
+     su propia explicación, sin tratarla como rechazo.
+   - Se agregó la fase 2: búsqueda obligatoria de un cruce real de
+     fecha local, reportada honestamente si no aparece.
    - jalarHistorico2026(), calcularCoincidencia(),
      generarConclusionCoincidencia(), evaluarMercados(), renderBrujula()
      y borrarCacheHistorico() quedan exactamente iguales a la versión
-     ya probada y aprobada — ninguna de estas se tocó.
+     ya probada y aprobada.
 
    ESTADO:
-     Zona horaria/fecha local del histórico (getClimaHistorico) →
-     PROBADO Y APROBADO por Perez (1,520 filas, 4/4 zonas PASS).
-     Trayectoria de viento de 7 horas (getTrayectoriaVientoHistorico) →
-     lógica de cálculo aprobada; rango angular BRISA_RANGO_GRADOS=30
-     propuesto por Perez como punto de partida, TODAVÍA NO aprobado
-     como definitivo (rangoAprobado: false en el propio dato). Esta
-     pantalla de prueba corta (probarTrayectoriaViento) está lista
-     para correrse, pendiente de que Perez la ejecute en el navegador
-     real y revise las 4 zonas + los casos de cruce de medianoche
-     antes de decidir si se integra a jalarHistorico2026() para
-     reconstruir el histórico completo (~1,500 filas).
+     Zona horaria/fecha local del histórico → PROBADO Y APROBADO
+     (1,520 filas, 4/4 zonas PASS). Trayectoria de 7 horas + regla de
+     viento casi calmo → lógica aprobada por Perez. Esta prueba
+     corregida (Toronto + cruce obligatorio) está lista para correrse;
+     pendiente de que Perez la ejecute y confirme antes de integrar a
+     jalarHistorico2026().
 
    FECHA:
      21 jul 2026.
@@ -380,16 +329,19 @@ async function jalarHistorico2026() {
   }
 }
 
-// PRUEBA CORTA de trayectoria de viento, por zona horaria — NO toca
-// localStorage, NO toca historico2026, NO llama a jalarHistorico2026().
-// Solo lectura. Ver prólogo arriba para el detalle completo.
+// PRUEBA CORTA de trayectoria de viento — SOLO LECTURA. NO toca
+// localStorage, historico2026 ni jalarHistorico2026(). Ver prólogo.
 async function probarTrayectoriaViento(porZona) {
   porZona = porZona || 2;
   const TOPE_DIAS_ESCANEADOS = 90;
   const TOPE_JUEGOS_PROCESADOS = 150;
+  const TOPE_DIAS_CRUCE = 90;
+  const TOPE_JUEGOS_CRUCE = 200;
 
+  // CORREGIDO en esta pasada: America/Toronto entra en ET (mismo
+  // desfase horario que New York, aunque el nombre IANA sea distinto).
   function bucketDeTz(tz) {
-    if (tz === "America/New_York") return "ET";
+    if (tz === "America/New_York" || tz === "America/Toronto") return "ET";
     if (tz === "America/Chicago") return "Central";
     if (tz === "America/Phoenix" || tz === "America/Denver") return "Mountain";
     if (tz === "America/Los_Angeles") return "Pacific";
@@ -401,6 +353,12 @@ async function probarTrayectoriaViento(porZona) {
     const fechas = t.puntos.map(p => p.fechaLocalUsada).filter(Boolean);
     const unicas = [...new Set(fechas)];
     return { cruza: unicas.length > 1, fechas: unicas };
+  }
+
+  function claseClasificacion(c) {
+    if (c === "BRISA_ESTABLE") return "ok";
+    if (c === "BRISA_CAMBIANTE") return "bad";
+    return "mid"; // NO_CONFIRMADO o DIRECCION_NO_CONFIABLE
   }
 
   function tarjetaJuego(r, etiqueta) {
@@ -415,7 +373,7 @@ async function probarTrayectoriaViento(porZona) {
       `;
     }
     const cruce = cruceFechaLocal(t);
-    const cls = t.clasificacion === "BRISA_ESTABLE" ? "ok" : (t.clasificacion === "BRISA_CAMBIANTE" ? "bad" : "mid");
+    const cls = claseClasificacion(t.clasificacion);
 
     return `
       <div class="juego">
@@ -426,6 +384,9 @@ async function probarTrayectoriaViento(porZona) {
           <summary style="cursor:pointer;font-weight:800">Los 7 puntos capturados</summary>
           ${t.puntos.map(p => {
             const cuenta = t.offsetsClasificacion.includes(p.offsetHoras);
+            const avisoVelocidad = p.windMph !== null && !p.direccionConfiable
+              ? ` · <span class="mid">viento &lt; ${t.velocidadMinimaDireccionConfiable} mph, dirección no confiable</span>`
+              : "";
             return `
               <div class="small">
                 offset ${p.offsetHoras >= 0 ? "+" + p.offsetHoras : p.offsetHoras}h ·
@@ -433,6 +394,7 @@ async function probarTrayectoriaViento(porZona) {
                 viene de ${p.windFromDeg ?? "N/C"}° · va hacia ${p.windToDeg ?? "N/C"}° ·
                 ${p.windMph ?? "N/C"} mph
                 ${cuenta ? " · <b>cuenta para clasificar</b>" : " · <i>prejuego, no cuenta</i>"}
+                ${avisoVelocidad}
               </div>
             `;
           }).join("")}
@@ -441,17 +403,17 @@ async function probarTrayectoriaViento(porZona) {
           <div class="meta"><b>Dirección inicio (offset 0):</b> ${t.direccionInicio ?? "N/C"}°</div>
           <div class="meta"><b>Dirección final (offset +4):</b> ${t.direccionFinal ?? "N/C"}°</div>
           <div class="meta"><b>Velocidad min/máx/prom:</b> ${t.velocidadMin ?? "N/C"} / ${t.velocidadMax ?? "N/C"} / ${t.velocidadProm ?? "N/C"} mph</div>
-          <div class="meta"><b>Media circular (0,+1,+2,+3,+4):</b> ${t.mediaCircularClasificacion !== null ? t.mediaCircularClasificacion.toFixed(1) + "°" : "N/C"}</div>
-          <div class="meta"><b>Desviación máxima:</b> ${t.desviacionMaximaClasificacion !== null ? t.desviacionMaximaClasificacion.toFixed(1) + "°" : "N/C"}</div>
-          <div class="meta"><b>Clasificación (±${t.rangoGradosUsado}°):</b> <span class="${cls}">${t.clasificacion}</span></div>
+          <div class="meta"><b>Media circular (0,+1,+2,+3,+4):</b> ${t.mediaCircularClasificacion !== null ? t.mediaCircularClasificacion.toFixed(1) + "°" : "N/C (no aplica en este estado)"}</div>
+          <div class="meta"><b>Desviación máxima:</b> ${t.desviacionMaximaClasificacion !== null ? t.desviacionMaximaClasificacion.toFixed(1) + "°" : "N/C (no aplica en este estado)"}</div>
+          <div class="meta"><b>Clasificación (±${t.rangoGradosUsado}°, mínimo ${t.velocidadMinimaDireccionConfiable} mph):</b> <span class="${cls}">${t.clasificacion}</span></div>
         </div>
       </div>
     `;
   }
 
   try {
-    setEstado("Probando trayectoria de viento por zona horaria (mínimo " + porZona + " por zona)...");
-    render("<div class='small'>Buscando ET, Central, Mountain/Phoenix-Denver y Pacífico...</div>");
+    setEstado("Fase 1: probando trayectoria de viento por zona horaria (mínimo " + porZona + " por zona)...");
+    render("<div class='small'>Buscando ET (incluye Toronto), Central, Mountain/Phoenix-Denver y Pacífico...</div>");
 
     const buckets = { ET: [], Central: [], Mountain: [], Pacific: [] };
     const rechazados = [];
@@ -511,6 +473,10 @@ async function probarTrayectoriaViento(porZona) {
           trayectoria: trayectoria
         };
 
+        // "Confirmada" = distinta de NO_CONFIRMADO. BRISA_ESTABLE,
+        // BRISA_CAMBIANTE y DIRECCION_NO_CONFIABLE son resultados
+        // reales con dato completo — solo NO_CONFIRMADO es rechazo
+        // por falta de dato.
         if (!trayectoria || trayectoria.clasificacion === "NO_CONFIRMADO") {
           rechazados.push(registro);
           continue;
@@ -530,6 +496,63 @@ async function probarTrayectoriaViento(porZona) {
     const totalConfirmados = Object.values(buckets).reduce((s, arr) => s + arr.length, 0);
     const primeraTrayectoria = buckets.ET[0] || buckets.Central[0] || buckets.Mountain[0] || buckets.Pacific[0];
     const rangoUsado = primeraTrayectoria?.trayectoria?.rangoGradosUsado ?? "?";
+    const velMinima = primeraTrayectoria?.trayectoria?.velocidadMinimaDireccionConfiable ?? "?";
+
+    // FASE 2 — NUEVA en esta pasada: búsqueda obligatoria de al menos
+    // un cruce real de fecha local, en un loop aparte con sus propios
+    // topes, reportado honestamente si no aparece.
+    setEstado("Fase 2: buscando un cruce real de fecha local (medianoche del parque)...");
+    let cruceEncontrado = null;
+    let d2 = CORE.START_HIST;
+    let diasEscaneadosCruce = 0;
+    let juegosProcesadosCruce = 0;
+
+    while (d2 <= end && !cruceEncontrado && diasEscaneadosCruce < TOPE_DIAS_CRUCE && juegosProcesadosCruce < TOPE_JUEGOS_CRUCE) {
+      diasEscaneadosCruce++;
+      let games2 = [];
+      try {
+        games2 = await CORE.scheduleByDate(d2);
+      } catch (e) {
+        d2 = CORE.addDays(d2, 1);
+        continue;
+      }
+
+      for (const g of games2) {
+        if (cruceEncontrado || juegosProcesadosCruce >= TOPE_JUEGOS_CRUCE) break;
+        if (!CORE.esJuegoFinal(g)) continue;
+
+        const venueId = g.venue?.id;
+        if (!venueId) continue;
+
+        let venueFull = null, coords = null;
+        try {
+          venueFull = await CORE.getVenueFull(venueId);
+          coords = CORE.coordsFromVenue(venueFull);
+        } catch (e) { continue; }
+        if (!coords) continue;
+
+        const nombreParque = g.venue?.name || venueFull?.name;
+
+        juegosProcesadosCruce++;
+        let trayectoria = null;
+        try {
+          trayectoria = await CORE.getTrayectoriaVientoHistorico(coords.lat, coords.lon, g.gameDate, nombreParque);
+        } catch (e) { trayectoria = null; }
+        if (!trayectoria) continue;
+
+        const cruce = cruceFechaLocal(trayectoria);
+        if (cruce && cruce.cruza) {
+          cruceEncontrado = {
+            matchup: (g.teams?.away?.team?.name || "?") + " @ " + (g.teams?.home?.team?.name || "?"),
+            venue: nombreParque || "SIN PARQUE",
+            date: d2,
+            trayectoria: trayectoria
+          };
+          break;
+        }
+      }
+      d2 = CORE.addDays(d2, 1);
+    }
 
     let html = `
       <div class="juego">
@@ -538,10 +561,10 @@ async function probarTrayectoriaViento(porZona) {
           ${cuotaFinal ? "Cuota completa" : "CUOTA INCOMPLETA — revisar cuáles zonas faltan"}
           (mínimo ${porZona} confirmado(s) por zona)
         </div>
-        <div class="meta">ET: ${buckets.ET.length}/${porZona} · Central: ${buckets.Central.length}/${porZona} · Mountain/Phoenix-Denver: ${buckets.Mountain.length}/${porZona} · Pacific: ${buckets.Pacific.length}/${porZona}</div>
+        <div class="meta">ET (incluye Toronto): ${buckets.ET.length}/${porZona} · Central: ${buckets.Central.length}/${porZona} · Mountain/Phoenix-Denver: ${buckets.Mountain.length}/${porZona} · Pacific: ${buckets.Pacific.length}/${porZona}</div>
         <div class="meta">Confirmados totales en cuota: ${totalConfirmados} · Rechazados (NO_CONFIRMADO o sin trayectoria): ${rechazados.length} · Otras zonas fuera de cuota: ${otrasZonas.length}</div>
-        <div class="meta">Días de calendario escaneados: ${diasEscaneados} · Juegos procesados (llamadas a Open-Meteo de trayectoria): ${juegosProcesados}</div>
-        <div class="meta bad">Rango angular usado: ±${rangoUsado}° — NO APROBADO todavía</div>
+        <div class="meta">Fase 1 — días escaneados: ${diasEscaneados} · juegos procesados: ${juegosProcesados}</div>
+        <div class="meta bad">Rango angular: ±${rangoUsado}° (NO APROBADO todavía) · Velocidad mínima para confiar en dirección: ${velMinima} mph</div>
         <div class="small">Esto NO guardó nada en el histórico ni en localStorage — es solo para inspeccionar el cálculo.</div>
       </div>
     `;
@@ -560,10 +583,27 @@ async function probarTrayectoriaViento(porZona) {
       rechazados.forEach(r => { html += tarjetaJuego(r, "RECHAZADO"); });
     }
 
+    // Panel obligatorio de cruce de medianoche, honesto si no aparece.
+    html += `<div class="juego"><div class="matchup">Prueba obligatoria: cruce real de fecha local</div>
+      <div class="meta">Fase 2 — días escaneados: ${diasEscaneadosCruce} · juegos procesados: ${juegosProcesadosCruce}</div>
+    </div>`;
+
+    if (cruceEncontrado) {
+      html += tarjetaJuego(cruceEncontrado, "CRUCE DE MEDIANOCHE CONFIRMADO");
+    } else {
+      html += `
+        <div class="juego">
+          <div class="bad"><b>NO SE ENCONTRÓ ningún cruce real de fecha local</b> en ${diasEscaneadosCruce} día(s) / ${juegosProcesadosCruce} juego(s) escaneados.</div>
+          <div class="small">Esto no confirma que la lógica esté mal — solo que, dentro de este rango escaneado, ningún juego real tuvo sus 7 puntos repartidos en más de una fecha local. Puede hacer falta escanear más días, o el caso puede ser genuinamente raro en el rango de fechas disponible.</div>
+        </div>
+      `;
+    }
+
     render(html);
-    setEstado(cuotaFinal
-      ? "Prueba completa: cuota cumplida en las 4 zonas."
-      : "Prueba terminada SIN cuota completa — revisar qué zonas faltaron.");
+    setEstado(
+      (cuotaFinal ? "Cuota completa. " : "Cuota incompleta. ") +
+      (cruceEncontrado ? "Cruce de medianoche confirmado." : "Sin cruce de medianoche encontrado en el rango escaneado.")
+    );
   } catch (e) {
     setEstado("ERROR REAL en probarTrayectoriaViento: " + (e && e.message ? e.message : e));
     console.error(e);
