@@ -1,4 +1,4 @@
-Entendido — el problema fue que GPT tocó el archivo cuando se cortó mi sesión anterior y lo dejó roto (código JS pegado fuera de `<script>`). Voy a usar la última versión completa y correcta que yo mismo construí en esta conversación — con `mlbpro-core.js`/`CORE`/`VIENTO` ya integrados — y ahí adentro sustituyo `jalarHistorico2026()` por la versión de recuperación incremental que me pasaste (documento 16). Nada más se toca.
+Aquí está `index.html` completo, exactamente la versión que integra `trayectoriaViento` dentro de `jalarHistorico2026()` — la misma que entregué antes, sin ningún cambio adicional. `mlbpro-core.js` y `auditar-trayectoria-historico.html` no se tocan.
 
 ```html
 <!DOCTYPE html>
@@ -37,7 +37,7 @@ button:disabled{opacity:.5}
 </a>
 
 <button onclick="jalarJuegosHoy()">JALAR JUEGOS DE HOY</button>
-<button onclick="jalarHistorico2026()">JALAR HISTÓRICO 2026 (recuperación incremental)</button>
+<button onclick="jalarHistorico2026()">JALAR HISTÓRICO 2026</button>
 <button onclick="probarTrayectoriaViento()" style="background:#1f6feb;color:#fff;">🧪 PROBAR TRAYECTORIA DE VIENTO (por zona horaria)</button>
 <button onclick="calcularCoincidencia()">CALCULAR COINCIDENCIA</button>
 <button onclick="generarConclusionCoincidencia()">CONCLUSIÓN DE COINCIDENCIA</button>
@@ -76,57 +76,55 @@ button:disabled{opacity:.5}
    mlbpro-core.js: CONGELADO — no se tocó ni una línea.
    auditar-trayectoria-historico.html: CONGELADA — no se tocó.
 
-   AVISO IMPORTANTE (21 jul 2026): una versión intermedia de este
-   archivo se corrompió (código JavaScript quedó pegado fuera de
-   <script>, así que la página lo mostraba como texto plano) durante
-   una edición hecha por otra herramienta mientras la sesión de esta
-   conversación se cortó a mitad de una entrega. ESTE archivo se
-   reconstruyó desde la última versión completa y válida generada en
-   esta conversación (con <script> correctamente abierto/cerrado una
-   sola vez), y sobre esa base se sustituyó jalarHistorico2026() por
-   la versión de recuperación incremental de abajo. No se partió del
-   archivo corrupto — se partió de la última copia íntegra conocida.
-
-   CORRECCIÓN 21 jul 2026 — reemplazo completo de jalarHistorico2026()
-   por la versión de recuperación incremental robusta:
-   - Reintentos (ejecutarConReintentos) para schedule, venue, clima,
-     boxscore y trayectoria, con validación de que la respuesta no sea
-     null/incompleta antes de aceptarla (climaValido, boxscoreValido,
-     venueValido, trayectoriaCompleta).
-   - Deduplicación por gamePk vía un Map (permite localizar y reparar
-     una fila existente, no solo detectar que ya existe).
-   - Reutiliza lat/lon/venue ya guardados en una fila existente cuando
-     están completos, en vez de volver a pedir venue innecesariamente.
-   - Repara trayectorias incompletas en filas YA existentes
-     (trayectoriasReparadas), sin tocar ningún otro campo de esas filas
-     salvo lat/lon/venue/venueId si hacía falta completarlos.
-   - Guarda el caché (CORE.guardarHistoricoCache) después de cada
-     fecha procesada, éxito o no.
-   - Al terminar, verifica TODO el caché (no solo lo nuevo) para listar
-     cualquier trayectoria que siga incompleta en cualquier fila.
-   - "RECUPERACIÓN INCREMENTAL COMPLETA" solo se declara si no quedó
-     ninguna fecha fallida, ningún juego Final fallido, y ninguna fila
-     con trayectoria incompleta en todo el histórico. En cualquier otro
-     caso dice explícitamente "⚠ RECUPERACIÓN INCOMPLETA", con el
-     detalle de cada fecha, cada juego y cada trayectoria pendiente.
-   - Ninguna otra función de este archivo se tocó: jalarJuegosHoy(),
-     probarTrayectoriaViento(), calcularCoincidencia(),
-     generarConclusionCoincidencia(), evaluarMercados(),
-     renderBrujula(), borrarCacheHistorico() quedan exactamente
-     iguales.
-   - Verificado: existe EXACTAMENTE una declaración de
-     jalarHistorico2026() en todo el archivo, dentro de este <script>,
-     y no queda ningún fragmento de JavaScript fuera de las etiquetas
-     <script>...</script> en ningún punto del documento. <head>,
-     <body> y <html> cierran correctamente.
+   INTEGRACIÓN DE TRAYECTORIA DE VIENTO EN jalarHistorico2026():
+   - Por cada juego que YA tenga parque válido, coordenadas válidas,
+     clima histórico válido (CORE.getClimaHistorico) y boxscore válido
+     (CORE.getBoxScore) — exactamente el mismo gate que ya existía para
+     guardar una fila — se llama ADEMÁS a
+     CORE.getTrayectoriaVientoHistorico(coords.lat, coords.lon,
+     g.gameDate, nombreParque), en su PROPIO try/catch, independiente
+     de todo lo demás. El resultado (objeto o null) se guarda tal cual
+     en el campo trayectoriaViento de la fila.
+   - Si getTrayectoriaVientoHistorico() falla o devuelve null, la fila
+     NO se descarta ni se salta: se guarda con trayectoriaViento: null.
+     La falta de trayectoria nunca elimina una fila que ya tiene clima
+     y boxscore reales — esos dos siguen siendo el único gate real
+     para que una fila entre al histórico.
+   - Contadores nuevos, separados de "saltados" (que sigue significando
+     exactamente lo mismo de antes: juego no Final, sin parque, sin
+     coordenadas, sin clima o sin boxscore): trayectoriasConObjeto,
+     brisaEstable, brisaCambiante, direccionNoConfiable, noConfirmado,
+     trayectoriaNull. Se muestran al terminar junto con filas totales,
+     saltados, fecha inicial y fecha final.
+   - DEDUPLICACIÓN: antes de procesar cada juego del día, se verifica
+     contra un Set (gamePksExistentes) construido a partir de todas las
+     filas ya presentes en el cache al arrancar la reconstrucción. Si
+     el gamePk ya existe, el juego se salta sin gastar ninguna llamada
+     de red y sin duplicarse. Cada fila nueva agrega su propio gamePk
+     al Set apenas se guarda, para que la MISMA corrida tampoco pueda
+     duplicarlo.
+   - Se mantienen intactos todos los campos históricos que ya existían:
+     gamePk, date, away, home, venue, venueId, roof, lat, lon, tempF,
+     humidity, precip, windMph, windDir, timezoneUsado,
+     horaLocalObjetivo, horaClimaUtilizada, awayRuns, homeRuns,
+     totalRuns, awayKs, homeKs, totalKs, awayHRs, homeHRs, totalHRs.
+   - NO se tocó calcularCoincidencia(), generarConclusionCoincidencia(),
+     evaluarMercados(), renderBrujula(), jalarJuegosHoy(),
+     borrarCacheHistorico() ni probarTrayectoriaViento().
 
    ESTADO:
-     NO_CONFIRMADO — reconstruido por revisión de código, todavía sin
-     correr en el navegador real. Pendiente que Perez lo suba,
-     confirme que la página ya NO muestra código como texto, y ejecute
-     JALAR HISTÓRICO 2026 para ver si termina en "RECUPERACIÓN
-     INCREMENTAL COMPLETA" o en "⚠ RECUPERACIÓN INCOMPLETA" con el
-     detalle de lo pendiente.
+     Zona horaria/fecha local del histórico → PROBADO Y APROBADO
+     (1,520 filas, 4/4 zonas PASS). Trayectoria de viento (offsets,
+     clasificación, viento casi calmo) → lógica aprobada por Perez en
+     mlbpro-core.js. La auditoría confirmó que las 1,527 filas
+     reconstruidas previamente NO tienen trayectoriaViento (se hizo con
+     un index.html anterior a esta integración) — 0 filas con el campo.
+     Este es el index.html correcto para volver a reconstruir: requiere
+     BORRAR CACHE HISTÓRICO primero (para forzar reconstrucción
+     completa desde CORE.START_HIST) y luego JALAR HISTÓRICO 2026.
+     Nada de esto queda declarado aprobado hasta que Perez lo corra y
+     confirme los contadores + audite el resultado en
+     auditar-trayectoria-historico.html.
 
    FECHA:
      21 jul 2026.
@@ -215,904 +213,178 @@ async function jalarJuegosHoy() {
   }
 }
 
-// REESCRITA como recuperación incremental robusta. Ver prólogo arriba.
 async function jalarHistorico2026() {
   try {
     let rows = CORE.leerHistoricoCache();
-
-    if (!Array.isArray(rows)) rows = [];
-
-    const filasIniciales = rows.length;
-    const start = CORE.START_HIST;
     const end = CORE.ayerISO();
+    let d = CORE.START_HIST;
 
-    const fechasFallidas = [];
-    const juegosFallidos = [];
+    if (rows.length) {
+      const fechas = rows.map(r => r.date).filter(Boolean).sort();
+      const ultima = fechas[fechas.length - 1];
+      d = CORE.addDays(ultima, 1);
+    }
 
-    let fechasRevisadas = 0;
-    let juegosNoFinal = 0;
-    let filasNuevas = 0;
-    let trayectoriasReparadas = 0;
+    if (d > end) {
+      historico2026 = rows;
+      render(`
+        <div class="juego">
+          <div class="matchup">Histórico 2026 en caché</div>
+          <div class="meta">Filas: ${rows.length}</div>
+          <div class="meta">Ya está actualizado hasta: ${end}</div>
+        </div>
+      `);
+      setEstado("Listo. Histórico en cache: " + rows.length + " filas.");
+      return;
+    }
 
-    let trayectoriasNuevasConObjeto = 0;
+    setEstado("Histórico: " + d + " · filas en caché: " + rows.length);
+    render("<div class='small'>Procesando histórico nuevo. Puede tardar.</div>");
+
+    // Deduplicación: Set de gamePk ya presentes en el cache al arrancar.
+    // Ningún juego con gamePk ya existente se vuelve a agregar.
+    const gamePksExistentes = new Set(
+      rows.map(r => String(r.gamePk)).filter(Boolean)
+    );
+
+    let saltados = 0;
+
+    // Contadores de trayectoria, separados de "saltados".
+    let trayectoriasConObjeto = 0;
     let brisaEstable = 0;
     let brisaCambiante = 0;
     let direccionNoConfiable = 0;
     let noConfirmado = 0;
-    let trayectoriaNullNueva = 0;
-
-    function esperar(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    function mensajeError(error) {
-      if (!error) return "SIN_MENSAJE";
-      if (error.message) return String(error.message);
-      return String(error);
-    }
-
-    function textoValido(valor) {
-      return (
-        valor !== null &&
-        valor !== undefined &&
-        String(valor).trim() !== ""
-      );
-    }
-
-    function trayectoriaCompleta(trayectoria) {
-      if (
-        !trayectoria ||
-        typeof trayectoria !== "object" ||
-        Array.isArray(trayectoria)
-      ) {
-        return false;
-      }
-
-      if (!Array.isArray(trayectoria.puntos)) return false;
-      if (trayectoria.puntos.length !== 7) return false;
-
-      const offsetsEsperados = [-2, -1, 0, 1, 2, 3, 4];
-      const offsetsReales = trayectoria.puntos.map(
-        punto => Number(punto?.offsetHoras)
-      );
-
-      if (
-        offsetsReales.length !== offsetsEsperados.length ||
-        offsetsReales.some(
-          (offset, i) => offset !== offsetsEsperados[i]
-        )
-      ) {
-        return false;
-      }
-
-      if (!Array.isArray(trayectoria.offsetsClasificacion)) {
-        return false;
-      }
-
-      const offsetsClasificacionEsperados = [0, 1, 2, 3, 4];
-      const offsetsClasificacionReales =
-        trayectoria.offsetsClasificacion.map(Number);
-
-      if (
-        offsetsClasificacionReales.length !==
-          offsetsClasificacionEsperados.length ||
-        offsetsClasificacionReales.some(
-          (offset, i) =>
-            offset !== offsetsClasificacionEsperados[i]
-        )
-      ) {
-        return false;
-      }
-
-      const clasificacionesValidas = new Set([
-        "BRISA_ESTABLE",
-        "BRISA_CAMBIANTE",
-        "DIRECCION_NO_CONFIABLE",
-        "NO_CONFIRMADO"
-      ]);
-
-      if (
-        !clasificacionesValidas.has(
-          trayectoria.clasificacion
-        )
-      ) {
-        return false;
-      }
-
-      if (!textoValido(trayectoria.timezoneUsado)) {
-        return false;
-      }
-
-      for (const punto of trayectoria.puntos) {
-        if (!punto || typeof punto !== "object") return false;
-
-        if (!textoValido(punto.fechaLocalUsada)) return false;
-        if (!textoValido(punto.claveLocalUsada)) return false;
-
-        if (typeof punto.direccionConfiable !== "boolean") {
-          return false;
-        }
-      }
-
-      return true;
-    }
-
-    async function ejecutarConReintentos(
-      funcion,
-      validarRespuesta,
-      intentos = 3
-    ) {
-      let ultimoError = null;
-
-      for (let intento = 1; intento <= intentos; intento++) {
-        try {
-          const respuesta = await funcion();
-
-          if (
-            typeof validarRespuesta === "function" &&
-            !validarRespuesta(respuesta)
-          ) {
-            throw new Error(
-              "La respuesta llegó vacía, incompleta o inválida."
-            );
-          }
-
-          return respuesta;
-        } catch (error) {
-          ultimoError = error;
-
-          if (intento < intentos) {
-            await esperar(400 * intento);
-          }
-        }
-      }
-
-      throw (
-        ultimoError ||
-        new Error("Fallo después de todos los reintentos.")
-      );
-    }
-
-    function datosBasicosJuego(g, fecha) {
-      return {
-        fecha,
-        gamePk:
-          g?.gamePk !== null && g?.gamePk !== undefined
-            ? g.gamePk
-            : null,
-        matchup:
-          (g?.teams?.away?.team?.name || "?") +
-          " @ " +
-          (g?.teams?.home?.team?.name || "?")
-      };
-    }
-
-    function registrarJuegoFallido(
-      g,
-      fecha,
-      etapa,
-      error
-    ) {
-      const base = datosBasicosJuego(g, fecha);
-
-      juegosFallidos.push({
-        fecha: base.fecha,
-        gamePk: base.gamePk,
-        matchup: base.matchup,
-        etapa,
-        error: mensajeError(error)
-      });
-    }
-
-    function construirMapaFilas(lista) {
-      const mapa = new Map();
-
-      lista.forEach((fila, indice) => {
-        if (
-          fila &&
-          fila.gamePk !== null &&
-          fila.gamePk !== undefined &&
-          String(fila.gamePk).trim() !== ""
-        ) {
-          mapa.set(String(fila.gamePk), {
-            fila,
-            indice
-          });
-        }
-      });
-
-      return mapa;
-    }
-
-    function boxscoreValido(box) {
-      return (
-        box &&
-        typeof box === "object" &&
-        esNumeroReal(box.awayRuns) &&
-        esNumeroReal(box.homeRuns) &&
-        esNumeroReal(box.awayKs) &&
-        esNumeroReal(box.homeKs) &&
-        esNumeroReal(box.awayHRs) &&
-        esNumeroReal(box.homeHRs)
-      );
-    }
-
-    function climaValido(clima) {
-      return (
-        clima &&
-        typeof clima === "object" &&
-        !Array.isArray(clima)
-      );
-    }
-
-    function venueValido(venue) {
-      return (
-        venue &&
-        typeof venue === "object" &&
-        !Array.isArray(venue)
-      );
-    }
-
-    async function obtenerDatosParque(g, filaExistente) {
-      const venueId =
-        filaExistente?.venueId ||
-        g?.venue?.id ||
-        null;
-
-      let nombreParque =
-        filaExistente?.venue ||
-        g?.venue?.name ||
-        null;
-
-      let lat =
-        filaExistente && esNumeroReal(filaExistente.lat)
-          ? Number(filaExistente.lat)
-          : null;
-
-      let lon =
-        filaExistente && esNumeroReal(filaExistente.lon)
-          ? Number(filaExistente.lon)
-          : null;
-
-      let venueFull = null;
-
-      if (
-        !esNumeroReal(lat) ||
-        !esNumeroReal(lon) ||
-        !textoValido(nombreParque)
-      ) {
-        if (!venueId) {
-          throw new Error(
-            "No existe venueId para recuperar los datos del parque."
-          );
-        }
-
-        venueFull = await ejecutarConReintentos(
-          () => CORE.getVenueFull(venueId),
-          venueValido,
-          3
-        );
-
-        const coords = CORE.coordsFromVenue(venueFull);
-
-        if (
-          !coords ||
-          !esNumeroReal(coords.lat) ||
-          !esNumeroReal(coords.lon)
-        ) {
-          throw new Error(
-            "Coordenadas del parque no confirmadas."
-          );
-        }
-
-        lat = Number(coords.lat);
-        lon = Number(coords.lon);
-
-        nombreParque =
-          nombreParque ||
-          venueFull?.name ||
-          null;
-      }
-
-      if (!textoValido(nombreParque)) {
-        throw new Error(
-          "Nombre del parque no confirmado."
-        );
-      }
-
-      return {
-        venueId,
-        venueFull,
-        nombreParque,
-        lat: Number(lat),
-        lon: Number(lon)
-      };
-    }
-
-    let mapaFilas = construirMapaFilas(rows);
-
-    setEstado(
-      "Recuperación incremental: revisando desde " +
-      start +
-      " hasta " +
-      end +
-      "..."
-    );
-
-    render(`
-      <div class="small">
-        Revisando el calendario completo. Las filas existentes no se
-        borran, no se duplican y no se vuelven a descargar si ya están
-        completas.
-      </div>
-    `);
-
-    let d = start;
+    let trayectoriaNull = 0;
 
     while (d <= end) {
-      fechasRevisadas++;
-
       setEstado(
-        "Recuperación: " +
-        d +
-        " · filas: " +
-        rows.length +
-        " · nuevas: " +
-        filasNuevas +
-        " · trayectorias reparadas: " +
-        trayectoriasReparadas +
-        " · fechas fallidas: " +
-        fechasFallidas.length +
-        " · juegos fallidos: " +
-        juegosFallidos.length
+        "Histórico: " + d + " · filas: " + rows.length + " · saltados: " + saltados +
+        " · trayectorias OK: " + trayectoriasConObjeto + " · trayectorias null: " + trayectoriaNull
       );
-
-      let games;
-
+      let games = [];
       try {
-        games = await ejecutarConReintentos(
-          () => CORE.scheduleByDate(d),
-          respuesta => Array.isArray(respuesta),
-          3
-        );
-      } catch (errorSchedule) {
-        fechasFallidas.push({
-          fecha: d,
-          etapa: "SCHEDULE",
-          error: mensajeError(errorSchedule)
-        });
-
+        games = await CORE.scheduleByDate(d);
+      } catch (e) {
         d = CORE.addDays(d, 1);
         continue;
       }
 
       for (const g of games) {
-        if (!CORE.esJuegoFinal(g)) {
-          juegosNoFinal++;
-          continue;
-        }
+        if (!CORE.esJuegoFinal(g)) { saltados++; continue; }
 
-        const gamePkTexto =
-          g?.gamePk !== null &&
-          g?.gamePk !== undefined &&
-          String(g.gamePk).trim() !== ""
-            ? String(g.gamePk)
-            : "";
+        // Deduplicación temprana: si este gamePk ya está en el
+        // histórico, se salta sin gastar ninguna llamada de red y sin
+        // volver a agregarlo.
+        if (gamePksExistentes.has(String(g.gamePk))) continue;
 
-        if (!gamePkTexto) {
-          registrarJuegoFallido(
-            g,
-            d,
-            "GAME_PK",
-            new Error(
-              "Juego Final sin gamePk confirmado."
-            )
-          );
-          continue;
-        }
+        const venueId = g.venue?.id;
+        if (!venueId) { saltados++; continue; }
 
-        const registroExistente =
-          mapaFilas.get(gamePkTexto);
-
-        /*
-          El juego ya existe.
-
-          Si la trayectoria está completa, no hace ninguna llamada.
-
-          Si falta o está incompleta, vuelve a pedir únicamente la
-          trayectoria y actualiza la misma fila, sin duplicarla.
-        */
-        if (registroExistente) {
-          const filaExistente =
-            registroExistente.fila;
-
-          if (
-            trayectoriaCompleta(
-              filaExistente.trayectoriaViento
-            )
-          ) {
-            continue;
-          }
-
-          let parqueExistente;
-
-          try {
-            parqueExistente =
-              await obtenerDatosParque(
-                g,
-                filaExistente
-              );
-          } catch (errorParqueExistente) {
-            registrarJuegoFallido(
-              g,
-              d,
-              "TRAYECTORIA_PARQUE",
-              errorParqueExistente
-            );
-            continue;
-          }
-
-          let trayectoriaReparada;
-
-          try {
-            trayectoriaReparada =
-              await ejecutarConReintentos(
-                () =>
-                  CORE.getTrayectoriaVientoHistorico(
-                    parqueExistente.lat,
-                    parqueExistente.lon,
-                    g.gameDate,
-                    parqueExistente.nombreParque
-                  ),
-                trayectoriaCompleta,
-                3
-              );
-          } catch (errorTrayectoriaExistente) {
-            registrarJuegoFallido(
-              g,
-              d,
-              "TRAYECTORIA_EXISTENTE",
-              errorTrayectoriaExistente
-            );
-            continue;
-          }
-
-          filaExistente.trayectoriaViento =
-            trayectoriaReparada;
-
-          filaExistente.lat =
-            parqueExistente.lat;
-
-          filaExistente.lon =
-            parqueExistente.lon;
-
-          filaExistente.venue =
-            parqueExistente.nombreParque;
-
-          if (
-            !filaExistente.venueId &&
-            parqueExistente.venueId
-          ) {
-            filaExistente.venueId =
-              parqueExistente.venueId;
-          }
-
-          trayectoriasReparadas++;
-          continue;
-        }
-
-        /*
-          Juego Final faltante: se procesa completo.
-        */
-        let parque;
-
+        let venueFull = null, coords = null;
         try {
-          parque = await obtenerDatosParque(
-            g,
-            null
-          );
-        } catch (errorParque) {
-          registrarJuegoFallido(
-            g,
-            d,
-            "VENUE_COORDS",
-            errorParque
-          );
-          continue;
-        }
+          venueFull = await CORE.getVenueFull(venueId);
+          coords = CORE.coordsFromVenue(venueFull);
+        } catch (e) { saltados++; continue; }
+        if (!coords) { saltados++; continue; }
 
-        let clima;
+        const nombreParque = g.venue?.name || venueFull?.name;
 
+        let clima = null;
         try {
-          clima = await ejecutarConReintentos(
-            () =>
-              CORE.getClimaHistorico(
-                parque.lat,
-                parque.lon,
-                d,
-                g.gameDate,
-                parque.nombreParque
-              ),
-            climaValido,
-            3
-          );
-        } catch (errorClima) {
-          registrarJuegoFallido(
-            g,
-            d,
-            "CLIMA",
-            errorClima
-          );
-          continue;
-        }
+          clima = await CORE.getClimaHistorico(coords.lat, coords.lon, d, g.gameDate, nombreParque);
+        } catch (e) { saltados++; continue; }
+        if (!clima) { saltados++; continue; }
 
         let box;
-
         try {
-          box = await ejecutarConReintentos(
-            () => CORE.getBoxScore(g.gamePk),
-            boxscoreValido,
-            3
-          );
-        } catch (errorBox) {
-          registrarJuegoFallido(
-            g,
-            d,
-            "BOXSCORE",
-            errorBox
-          );
-          continue;
-        }
+          box = await CORE.getBoxScore(g.gamePk);
+        } catch (e) { saltados++; continue; }
 
-        const awayRuns = Number(box.awayRuns);
-        const homeRuns = Number(box.homeRuns);
-        const awayKs = Number(box.awayKs);
-        const homeKs = Number(box.homeKs);
-        const awayHRs = Number(box.awayHRs);
-        const homeHRs = Number(box.homeHRs);
-
+        // Trayectoria de viento, EN SU PROPIO try/catch. Un error acá
+        // NUNCA borra la fila ni detiene la reconstrucción: clima y
+        // boxscore ya son válidos en este punto, así que la fila se
+        // guarda de todas formas, con trayectoriaViento: null si esto
+        // falla o no devuelve nada.
         let trayectoria = null;
-
         try {
-          trayectoria =
-            await ejecutarConReintentos(
-              () =>
-                CORE.getTrayectoriaVientoHistorico(
-                  parque.lat,
-                  parque.lon,
-                  g.gameDate,
-                  parque.nombreParque
-                ),
-              trayectoriaCompleta,
-              3
-            );
-        } catch (errorTrayectoriaNueva) {
+          trayectoria = await CORE.getTrayectoriaVientoHistorico(coords.lat, coords.lon, g.gameDate, nombreParque);
+        } catch (e) {
           trayectoria = null;
-
-          registrarJuegoFallido(
-            g,
-            d,
-            "TRAYECTORIA_NUEVA",
-            errorTrayectoriaNueva
-          );
         }
 
         if (trayectoria === null) {
-          trayectoriaNullNueva++;
+          trayectoriaNull++;
         } else {
-          trayectoriasNuevasConObjeto++;
-
-          if (
-            trayectoria.clasificacion ===
-            "BRISA_ESTABLE"
-          ) {
-            brisaEstable++;
-          } else if (
-            trayectoria.clasificacion ===
-            "BRISA_CAMBIANTE"
-          ) {
-            brisaCambiante++;
-          } else if (
-            trayectoria.clasificacion ===
-            "DIRECCION_NO_CONFIABLE"
-          ) {
-            direccionNoConfiable++;
-          } else if (
-            trayectoria.clasificacion ===
-            "NO_CONFIRMADO"
-          ) {
-            noConfirmado++;
-          }
+          trayectoriasConObjeto++;
+          if (trayectoria.clasificacion === "BRISA_ESTABLE") brisaEstable++;
+          else if (trayectoria.clasificacion === "BRISA_CAMBIANTE") brisaCambiante++;
+          else if (trayectoria.clasificacion === "DIRECCION_NO_CONFIABLE") direccionNoConfiable++;
+          else if (trayectoria.clasificacion === "NO_CONFIRMADO") noConfirmado++;
         }
 
-        const filaNueva = {
+        rows.push({
           gamePk: g.gamePk,
           date: d,
-
-          away:
-            g?.teams?.away?.team?.name || "?",
-
-          home:
-            g?.teams?.home?.team?.name || "?",
-
-          venue: parque.nombreParque,
-          venueId:
-            parque.venueId ||
-            g?.venue?.id ||
-            null,
-
-          roof:
-            parque.venueFull?.roofType ||
-            parque.venueFull?.roof ||
-            "",
-
-          lat: parque.lat,
-          lon: parque.lon,
-
+          away: g.teams?.away?.team?.name || "?",
+          home: g.teams?.home?.team?.name || "?",
+          venue: g.venue?.name || venueFull?.name || "SIN PARQUE",
+          venueId: venueId,
+          roof: venueFull?.roofType || venueFull?.roof || "",
+          lat: coords.lat,
+          lon: coords.lon,
           tempF: clima.tempF,
           humidity: clima.humidity,
           precip: clima.precip,
           windMph: clima.windMph,
           windDir: clima.windDir,
-
-          timezoneUsado:
-            clima.timezoneUsado,
-
-          horaLocalObjetivo:
-            clima.horaLocalObjetivo,
-
-          horaClimaUtilizada:
-            clima.horaClimaUtilizada,
-
+          timezoneUsado: clima.timezoneUsado,
+          horaLocalObjetivo: clima.horaLocalObjetivo,
+          horaClimaUtilizada: clima.horaClimaUtilizada,
+          // Trayectoria completa (objeto) o null, tal cual.
           trayectoriaViento: trayectoria,
-
-          awayRuns,
-          homeRuns,
-          totalRuns: awayRuns + homeRuns,
-
-          awayKs,
-          homeKs,
-          totalKs: awayKs + homeKs,
-
-          awayHRs,
-          homeHRs,
-          totalHRs: awayHRs + homeHRs
-        };
-
-        rows.push(filaNueva);
-
-        mapaFilas.set(gamePkTexto, {
-          fila: filaNueva,
-          indice: rows.length - 1
+          awayRuns: box.awayRuns,
+          homeRuns: box.homeRuns,
+          totalRuns: box.awayRuns + box.homeRuns,
+          awayKs: box.awayKs,
+          homeKs: box.homeKs,
+          totalKs: box.awayKs + box.homeKs,
+          awayHRs: box.awayHRs,
+          homeHRs: box.homeHRs,
+          totalHRs: box.awayHRs + box.homeHRs
         });
 
-        filasNuevas++;
+        // Se registra el gamePk apenas se guarda la fila, para que la
+        // MISMA corrida tampoco pueda duplicarlo.
+        gamePksExistentes.add(String(g.gamePk));
       }
-
-      historico2026 = rows;
-
-      try {
-        CORE.guardarHistoricoCache(rows);
-      } catch (errorGuardar) {
-        fechasFallidas.push({
-          fecha: d,
-          etapa: "GUARDAR_CACHE",
-          error: mensajeError(errorGuardar)
-        });
-      }
-
       d = CORE.addDays(d, 1);
     }
 
     historico2026 = rows;
-
-    /*
-      Comprobación final de TODO el caché, no solamente de esta corrida.
-      Si una sola fila queda sin trayectoria completa, no puede decir
-      recuperación completa.
-    */
-    const trayectoriasPendientes = rows
-      .filter(
-        fila =>
-          !trayectoriaCompleta(
-            fila?.trayectoriaViento
-          )
-      )
-      .map(fila => ({
-        gamePk:
-          fila?.gamePk ?? "N/C",
-        date:
-          fila?.date ?? "N/C",
-        matchup:
-          (fila?.away || "?") +
-          " @ " +
-          (fila?.home || "?")
-      }));
-
-    const recuperacionCompleta =
-      fechasFallidas.length === 0 &&
-      juegosFallidos.length === 0 &&
-      trayectoriasPendientes.length === 0;
-
-    const fechasFallidasHtml =
-      fechasFallidas.length
-        ? fechasFallidas
-            .map(
-              item => `
-                <div class="small bad"
-                     style="padding:6px 0;border-bottom:1px solid #222;">
-                  ${item.fecha} · ${item.etapa} · ${item.error}
-                </div>
-              `
-            )
-            .join("")
-        : `
-            <div class="small ok">
-              Ninguna fecha fallida.
-            </div>
-          `;
-
-    const juegosFallidosHtml =
-      juegosFallidos.length
-        ? juegosFallidos
-            .map(
-              item => `
-                <div class="small bad"
-                     style="padding:7px 0;border-bottom:1px solid #222;">
-                  <div><b>Fecha:</b> ${item.fecha}</div>
-                  <div><b>gamePk:</b> ${item.gamePk ?? "N/C"}</div>
-                  <div><b>Juego:</b> ${item.matchup}</div>
-                  <div><b>Etapa:</b> ${item.etapa}</div>
-                  <div><b>Error:</b> ${item.error}</div>
-                </div>
-              `
-            )
-            .join("")
-        : `
-            <div class="small ok">
-              Ningún juego Final fallido.
-            </div>
-          `;
-
-    const trayectoriasPendientesHtml =
-      trayectoriasPendientes.length
-        ? trayectoriasPendientes
-            .map(
-              item => `
-                <div class="small bad"
-                     style="padding:6px 0;border-bottom:1px solid #222;">
-                  ${item.date} · gamePk ${item.gamePk} · ${item.matchup}
-                </div>
-              `
-            )
-            .join("")
-        : `
-            <div class="small ok">
-              Ninguna trayectoria pendiente.
-            </div>
-          `;
-
+    CORE.guardarHistoricoCache(rows);
     render(`
       <div class="juego">
-        <div class="matchup ${
-          recuperacionCompleta ? "ok" : "bad"
-        }">
-          ${
-            recuperacionCompleta
-              ? "RECUPERACIÓN INCREMENTAL COMPLETA"
-              : "⚠ RECUPERACIÓN INCOMPLETA"
-          }
-        </div>
-
-        <div class="meta">
-          Filas iniciales: ${filasIniciales}
-        </div>
-
-        <div class="meta">
-          Filas nuevas recuperadas: ${filasNuevas}
-        </div>
-
-        <div class="meta">
-          Trayectorias existentes reparadas: ${trayectoriasReparadas}
-        </div>
-
-        <div class="meta">
-          Filas totales: ${rows.length}
-        </div>
-
-        <div class="meta">
-          Fechas revisadas: ${fechasRevisadas}
-          · desde ${start} hasta ${end}
-        </div>
-
-        <div class="meta">
-          Juegos no Final ignorados: ${juegosNoFinal}
-        </div>
-
-        <div class="meta" style="margin-top:10px">
-          <b>Fechas fallidas: ${fechasFallidas.length}</b>
-        </div>
-
-        ${fechasFallidasHtml}
-
-        <div class="meta" style="margin-top:10px">
-          <b>Juegos Final fallidos: ${juegosFallidos.length}</b>
-        </div>
-
-        ${juegosFallidosHtml}
-
-        <div class="meta" style="margin-top:10px">
-          <b>Trayectorias pendientes en todo el caché: ${trayectoriasPendientes.length}</b>
-        </div>
-
-        ${trayectoriasPendientesHtml}
-
-        <div class="meta" style="margin-top:10px">
-          <b>Trayectoria — solo filas nuevas de esta corrida:</b>
-        </div>
-
-        <div class="meta">
-          Con objeto trayectoriaViento:
-          ${trayectoriasNuevasConObjeto}
-        </div>
-
-        <div class="meta ok">
-          BRISA_ESTABLE: ${brisaEstable}
-        </div>
-
-        <div class="meta bad">
-          BRISA_CAMBIANTE: ${brisaCambiante}
-        </div>
-
-        <div class="meta mid">
-          DIRECCION_NO_CONFIABLE:
-          ${direccionNoConfiable}
-        </div>
-
-        <div class="meta mid">
-          NO_CONFIRMADO: ${noConfirmado}
-        </div>
-
-        <div class="meta">
-          trayectoriaViento null:
-          ${trayectoriaNullNueva}
-        </div>
+        <div class="matchup">Histórico 2026 actualizado</div>
+        <div class="meta">Filas totales: ${rows.length}</div>
+        <div class="meta">Juegos saltados (no Final / sin dato): ${saltados}</div>
+        <div class="meta">Desde: ${CORE.START_HIST}</div>
+        <div class="meta">Hasta: ${end}</div>
+        <div class="meta" style="margin-top:8px"><b>Trayectoria de viento — contadores de esta corrida:</b></div>
+        <div class="meta">Con objeto trayectoriaViento: ${trayectoriasConObjeto}</div>
+        <div class="meta ok">BRISA_ESTABLE: ${brisaEstable}</div>
+        <div class="meta bad">BRISA_CAMBIANTE: ${brisaCambiante}</div>
+        <div class="meta mid">DIRECCION_NO_CONFIABLE: ${direccionNoConfiable}</div>
+        <div class="meta mid">NO_CONFIRMADO: ${noConfirmado}</div>
+        <div class="meta">trayectoriaViento: null: ${trayectoriaNull}</div>
       </div>
     `);
-
     setEstado(
-      recuperacionCompleta
-        ? (
-            "Recuperación completa: " +
-            filasNuevas +
-            " fila(s) nueva(s), " +
-            trayectoriasReparadas +
-            " trayectoria(s) reparada(s), " +
-            rows.length +
-            " filas totales."
-          )
-        : (
-            "RECUPERACIÓN INCOMPLETA: " +
-            fechasFallidas.length +
-            " fecha(s) fallida(s), " +
-            juegosFallidos.length +
-            " juego(s) fallido(s), " +
-            trayectoriasPendientes.length +
-            " trayectoria(s) pendiente(s)."
-          )
+      "Histórico actualizado: " + rows.length + " filas · " + saltados + " saltados · " +
+      "trayectorias con objeto: " + trayectoriasConObjeto + " · null: " + trayectoriaNull
     );
-  } catch (error) {
-    const detalleError =
-      error && error.message
-        ? String(error.message)
-        : String(error || "SIN_MENSAJE");
-
-    setEstado(
-      "ERROR REAL en jalarHistorico2026: " +
-      detalleError
-    );
-
-    console.error(error);
+  } catch (e) {
+    setEstado("Error histórico: " + e.message);
   }
 }
 
@@ -1725,6 +997,4 @@ window.addEventListener("load", () => {
 </html>
 ```
 
-**Importante — esto es lo que tienes que verificar antes de asumir que esto arregla tu problema real:** yo confirmé con mis propios ojos que el `index.html` que está *ahora mismo* en GitHub (`juisma05-hub/mlbpro-clima-match`, rama `main`) es una versión vieja y completamente distinta — sin `mlbpro-core.js`, sin `estadios.js`, sin `trayectoriaViento`, sin nada de lo que hicimos. Si GPT dejó algo roto, **ese algo roto no está en GitHub ahora** (o al menos no en la rama `main`) — puede estar en tu dispositivo local, sin subir todavía, o en otra rama.
-
-Antes de subir este archivo, confirma dónde vive realmente el archivo roto que quieres reemplazar, para no terminar subiendo esta versión "buena" encima de la vieja de GitHub y perder de nuevo el hilo de qué es lo que realmente está desplegado.
+Cumple las 12 condiciones que listaste: `mlbpro-core.js` y `auditar-trayectoria-historico.html` sin tocar, try/catch propio para la trayectoria, `trayectoriaViento: null` cuando falla sin eliminar la fila, todos los campos históricos intactos, deduplicación por `gamePk`, los 6 contadores mostrados al terminar, y `calcularCoincidencia`/`generarConclusionCoincidencia`/`evaluarMercados`/`renderBrujula`/`jalarJuegosHoy` sin cambios. Para que sirva de algo con las 1,527 filas actuales (que la auditoría ya confirmó que no tienen `trayectoriaViento`), el paso es: **`BORRAR CACHE HISTÓRICO` → `JALAR HISTÓRICO 2026`**.
