@@ -1,3 +1,221 @@
+Entendido — el problema fue que GPT tocó el archivo cuando se cortó mi sesión anterior y lo dejó roto (código JS pegado fuera de `<script>`). Voy a usar la última versión completa y correcta que yo mismo construí en esta conversación — con `mlbpro-core.js`/`CORE`/`VIENTO` ya integrados — y ahí adentro sustituyo `jalarHistorico2026()` por la versión de recuperación incremental que me pasaste (documento 16). Nada más se toca.
+
+```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLBPro · Coincidencia climática</title>
+<style>
+body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:18px;color:#f5c518;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin-bottom:12px}
+button{width:100%;padding:15px;margin:6px 0;font-size:15px;font-weight:800;color:#000;background:#f5c518;border:none;border-radius:12px}
+button:disabled{opacity:.5}
+#estado{margin:12px 0;font-size:13px;color:#9ad}
+.juego{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+.matchup{font-size:16px;font-weight:800;color:#fff}
+.estadio{font-size:13px;color:#bbb;margin:3px 0 8px}
+.meta{font-size:13px;color:#ddd;margin:4px 0}
+.ok{color:#32d74b;font-weight:800}
+.mid{color:#ffd60a;font-weight:800}
+.bad{color:#ff453a;font-weight:800}
+.small{font-size:12px;color:#aaa;margin-top:5px}
+.match{margin-top:8px;padding:8px;border-radius:8px;background:#111;border:1px solid #333}
+.hist{margin-top:8px;border-top:1px solid #222;padding-top:8px}
+</style>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>MLBPro · Coincidencia climática</h1>
+<div class="sub">Data Madre 2026 · Caja de Pandora</div>
+
+<a href="auditar-trayectoria-historico.html"
+   style="display:inline-block;margin-bottom:10px;color:#79c0ff;font-size:13px;text-decoration:none;">
+  🧭 Ir a Auditoría de Trayectoria de Viento (solo lectura) →
+</a>
+
+<button onclick="jalarJuegosHoy()">JALAR JUEGOS DE HOY</button>
+<button onclick="jalarHistorico2026()">JALAR HISTÓRICO 2026 (recuperación incremental)</button>
+<button onclick="probarTrayectoriaViento()" style="background:#1f6feb;color:#fff;">🧪 PROBAR TRAYECTORIA DE VIENTO (por zona horaria)</button>
+<button onclick="calcularCoincidencia()">CALCULAR COINCIDENCIA</button>
+<button onclick="generarConclusionCoincidencia()">CONCLUSIÓN DE COINCIDENCIA</button>
+<button onclick="borrarCacheHistorico()" style="background:#da3633;color:#fff;">🗑️ BORRAR CACHE HISTÓRICO</button>
+
+<div id="estado">Listo.</div>
+<div id="lista"></div>
+
+<script src="estadios.js"></script>
+<script src="parques-orientacion.js"></script>
+<script src="mlbpro-core.js"></script>
+<script src="roof-status.js"></script>
+<script src="mlbpro-viento.js"></script>
+<script src="confidence-panel.js"></script>
+<script src="game-cards.js"></script>
+<script src="mlb-climate-match.js"></script>
+
+<script>
+/* ============================================================
+   PRÓLOGO — index.html (script inline)
+   ============================================================
+   QUÉ ES:
+     Pantalla principal. Jala juegos de hoy + clima, construye/lee el
+     histórico 2026 (incluyendo trayectoriaViento por fila), calcula
+     coincidencia climática, arma la conclusión con veredicto de
+     mercados y brújula, y ofrece una prueba corta de solo lectura para
+     auditar la trayectoria de viento por zona horaria. Enlaza además a
+     auditar-trayectoria-historico.html, página separada de solo
+     lectura para inspeccionar el histórico completo ya guardado.
+
+   ORDEN DE CARGA (no cambiar):
+     1. estadios.js  2. parques-orientacion.js  3. mlbpro-core.js
+     4. roof-status.js  5. mlbpro-viento.js  6. confidence-panel.js
+     7. game-cards.js  8. mlb-climate-match.js  9. este script inline
+
+   mlbpro-core.js: CONGELADO — no se tocó ni una línea.
+   auditar-trayectoria-historico.html: CONGELADA — no se tocó.
+
+   AVISO IMPORTANTE (21 jul 2026): una versión intermedia de este
+   archivo se corrompió (código JavaScript quedó pegado fuera de
+   <script>, así que la página lo mostraba como texto plano) durante
+   una edición hecha por otra herramienta mientras la sesión de esta
+   conversación se cortó a mitad de una entrega. ESTE archivo se
+   reconstruyó desde la última versión completa y válida generada en
+   esta conversación (con <script> correctamente abierto/cerrado una
+   sola vez), y sobre esa base se sustituyó jalarHistorico2026() por
+   la versión de recuperación incremental de abajo. No se partió del
+   archivo corrupto — se partió de la última copia íntegra conocida.
+
+   CORRECCIÓN 21 jul 2026 — reemplazo completo de jalarHistorico2026()
+   por la versión de recuperación incremental robusta:
+   - Reintentos (ejecutarConReintentos) para schedule, venue, clima,
+     boxscore y trayectoria, con validación de que la respuesta no sea
+     null/incompleta antes de aceptarla (climaValido, boxscoreValido,
+     venueValido, trayectoriaCompleta).
+   - Deduplicación por gamePk vía un Map (permite localizar y reparar
+     una fila existente, no solo detectar que ya existe).
+   - Reutiliza lat/lon/venue ya guardados en una fila existente cuando
+     están completos, en vez de volver a pedir venue innecesariamente.
+   - Repara trayectorias incompletas en filas YA existentes
+     (trayectoriasReparadas), sin tocar ningún otro campo de esas filas
+     salvo lat/lon/venue/venueId si hacía falta completarlos.
+   - Guarda el caché (CORE.guardarHistoricoCache) después de cada
+     fecha procesada, éxito o no.
+   - Al terminar, verifica TODO el caché (no solo lo nuevo) para listar
+     cualquier trayectoria que siga incompleta en cualquier fila.
+   - "RECUPERACIÓN INCREMENTAL COMPLETA" solo se declara si no quedó
+     ninguna fecha fallida, ningún juego Final fallido, y ninguna fila
+     con trayectoria incompleta en todo el histórico. En cualquier otro
+     caso dice explícitamente "⚠ RECUPERACIÓN INCOMPLETA", con el
+     detalle de cada fecha, cada juego y cada trayectoria pendiente.
+   - Ninguna otra función de este archivo se tocó: jalarJuegosHoy(),
+     probarTrayectoriaViento(), calcularCoincidencia(),
+     generarConclusionCoincidencia(), evaluarMercados(),
+     renderBrujula(), borrarCacheHistorico() quedan exactamente
+     iguales.
+   - Verificado: existe EXACTAMENTE una declaración de
+     jalarHistorico2026() en todo el archivo, dentro de este <script>,
+     y no queda ningún fragmento de JavaScript fuera de las etiquetas
+     <script>...</script> en ningún punto del documento. <head>,
+     <body> y <html> cierran correctamente.
+
+   ESTADO:
+     NO_CONFIRMADO — reconstruido por revisión de código, todavía sin
+     correr en el navegador real. Pendiente que Perez lo suba,
+     confirme que la página ya NO muestra código como texto, y ejecute
+     JALAR HISTÓRICO 2026 para ver si termina en "RECUPERACIÓN
+     INCREMENTAL COMPLETA" o en "⚠ RECUPERACIÓN INCOMPLETA" con el
+     detalle de lo pendiente.
+
+   FECHA:
+     21 jul 2026.
+   ============================================================ */
+const CORE = window.MLBPRO_CORE;
+const VIENTO = window.MLBPRO_VIENTO;
+
+let juegosHoy = [];
+let climaHoy = {};
+let historico2026 = [];
+
+function setEstado(t) { document.getElementById("estado").textContent = t; }
+function render(html) { document.getElementById("lista").innerHTML = html; }
+
+function esNumeroReal(v) {
+  if (v === null || v === undefined || v === "") return false;
+  if (typeof v === "boolean") return false;
+  if (typeof v === "string" && v.trim() === "") return false;
+  return Number.isFinite(Number(v));
+}
+function safe(x) { return esNumeroReal(x) ? Number(x) : "NO"; }
+
+function cardJuegoHoy(g, c) {
+  const away = g.teams?.away?.team?.name || "?";
+  const home = g.teams?.home?.team?.name || "?";
+  const venue = g.venue?.name || "SIN PARQUE";
+  return `
+    <div class="juego">
+      <div class="matchup">${away} @ ${home}</div>
+      <div class="estadio">${venue}</div>
+      ${
+        c ? `
+          <div class="meta">Temp: ${safe(c.tempF)}°F</div>
+          <div class="meta">Humedad: ${safe(c.humidity)}%</div>
+          <div class="meta">Precip: ${safe(c.precip)}</div>
+          <div class="meta">Viento: ${safe(c.windMph)} mph</div>
+          <div class="meta">Dir viento: ${esNumeroReal(c.windDir) ? c.windDir + "°" : "NO CONFIRMADA"}</div>
+          <div class="meta">Roof: ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(venue).label : "NO CONFIRMADO"}</div>
+        ` : `<div class="bad">Clima no confirmado</div>`
+      }
+    </div>
+  `;
+}
+
+async function jalarJuegosHoy() {
+  try {
+    setEstado("Jalando juegos de hoy...");
+    render("");
+    const games = await CORE.scheduleByDate(CORE.hoyISO());
+    juegosHoy = games;
+    climaHoy = {};
+    let html = "";
+
+    for (const g of games) {
+      const venueId = g.venue?.id;
+      let venueFull = null, coords = null;
+
+      if (venueId) {
+        venueFull = await CORE.getVenueFull(venueId);
+        coords = CORE.coordsFromVenue(venueFull);
+      }
+
+      if (coords) {
+        const clima = await CORE.getClimaActual(coords.lat, coords.lon);
+        climaHoy[g.gamePk] = {
+          gamePk: g.gamePk,
+          date: CORE.hoyISO(),
+          gameDate: g.gameDate,
+          away: g.teams?.away?.team?.name || "?",
+          home: g.teams?.home?.team?.name || "?",
+          venue: g.venue?.name || venueFull?.name || "SIN PARQUE",
+          venueId: venueId,
+          roof: venueFull?.roofType || venueFull?.roof || "",
+          lat: coords.lat,
+          lon: coords.lon,
+          ...clima
+        };
+      }
+      html += cardJuegoHoy(g, climaHoy[g.gamePk]);
+    }
+
+    render(html || "<div class='bad'>No hay juegos.</div>");
+    setEstado("Juegos de hoy cargados.");
+  } catch (e) {
+    setEstado("Error jalando juegos de hoy: " + e.message);
+  }
+}
+
+// REESCRITA como recuperación incremental robusta. Ver prólogo arriba.
 async function jalarHistorico2026() {
   try {
     let rows = CORE.leerHistoricoCache();
@@ -883,17 +1101,630 @@ async function jalarHistorico2026() {
             " trayectoria(s) pendiente(s)."
           )
     );
- } catch (error) {
-  const detalleError =
-    error && error.message
-      ? String(error.message)
-      : String(error || "SIN_MENSAJE");
+  } catch (error) {
+    const detalleError =
+      error && error.message
+        ? String(error.message)
+        : String(error || "SIN_MENSAJE");
 
-  setEstado(
-    "ERROR REAL en jalarHistorico2026: " +
-    detalleError
-  );
+    setEstado(
+      "ERROR REAL en jalarHistorico2026: " +
+      detalleError
+    );
 
-  console.error(error);
+    console.error(error);
+  }
 }
+
+// PRUEBA CORTA de trayectoria de viento — SOLO LECTURA. NO toca
+// localStorage, historico2026 ni jalarHistorico2026(). Sin cambios.
+async function probarTrayectoriaViento(porZona) {
+  porZona = porZona || 2;
+  const TOPE_DIAS_ESCANEADOS = 90;
+  const TOPE_JUEGOS_PROCESADOS = 150;
+  const TOPE_DIAS_CRUCE = 90;
+  const TOPE_JUEGOS_CRUCE = 200;
+
+  function bucketDeTz(tz) {
+    if (tz === "America/New_York" || tz === "America/Toronto") return "ET";
+    if (tz === "America/Chicago") return "Central";
+    if (tz === "America/Phoenix" || tz === "America/Denver") return "Mountain";
+    if (tz === "America/Los_Angeles") return "Pacific";
+    return null;
+  }
+
+  function cruceFechaLocal(t) {
+    if (!t || !Array.isArray(t.puntos)) return null;
+    const fechas = t.puntos.map(p => p.fechaLocalUsada).filter(Boolean);
+    const unicas = [...new Set(fechas)];
+    return { cruza: unicas.length > 1, fechas: unicas };
+  }
+
+  function claseClasificacion(c) {
+    if (c === "BRISA_ESTABLE") return "ok";
+    if (c === "BRISA_CAMBIANTE") return "bad";
+    return "mid";
+  }
+
+  function tarjetaJuego(r, etiqueta) {
+    const t = r.trayectoria;
+    if (!t) {
+      return `
+        <div class="juego">
+          <div class="matchup">${r.matchup} <span class="bad">[${etiqueta}]</span></div>
+          <div class="estadio">${r.venue} · ${r.date}</div>
+          <div class="bad">Sin trayectoria (Open-Meteo no devolvió datos usables)</div>
+        </div>
+      `;
+    }
+    const cruce = cruceFechaLocal(t);
+    const cls = claseClasificacion(t.clasificacion);
+
+    return `
+      <div class="juego">
+        <div class="matchup">${r.matchup} <span class="${etiqueta === 'RECHAZADO' ? 'bad' : 'ok'}">[${etiqueta}]</span></div>
+        <div class="estadio">${r.venue} · ${r.date} · ${t.timezoneUsado}</div>
+        ${cruce && cruce.cruza ? `<div class="meta bad">⚠ CRUZA FECHA LOCAL: ${cruce.fechas.join(" → ")}</div>` : `<div class="small">Sin cruce de fecha local (todos los puntos en la misma fecha).</div>`}
+        <details class="hist" style="cursor:pointer">
+          <summary style="cursor:pointer;font-weight:800">Los 7 puntos capturados</summary>
+          ${t.puntos.map(p => {
+            const cuenta = t.offsetsClasificacion.includes(p.offsetHoras);
+            const avisoVelocidad = p.windMph !== null && !p.direccionConfiable
+              ? ` · <span class="mid">viento &lt; ${t.velocidadMinimaDireccionConfiable} mph, dirección no confiable</span>`
+              : "";
+            return `
+              <div class="small">
+                offset ${p.offsetHoras >= 0 ? "+" + p.offsetHoras : p.offsetHoras}h ·
+                clave ${p.claveLocalUsada ?? "N/C"} ·
+                viene de ${p.windFromDeg ?? "N/C"}° · va hacia ${p.windToDeg ?? "N/C"}° ·
+                ${p.windMph ?? "N/C"} mph
+                ${cuenta ? " · <b>cuenta para clasificar</b>" : " · <i>prejuego, no cuenta</i>"}
+                ${avisoVelocidad}
+              </div>
+            `;
+          }).join("")}
+        </details>
+        <div class="match">
+          <div class="meta"><b>Dirección inicio (offset 0):</b> ${t.direccionInicio ?? "N/C"}°</div>
+          <div class="meta"><b>Dirección final (offset +4):</b> ${t.direccionFinal ?? "N/C"}°</div>
+          <div class="meta"><b>Velocidad min/máx/prom:</b> ${t.velocidadMin ?? "N/C"} / ${t.velocidadMax ?? "N/C"} / ${t.velocidadProm ?? "N/C"} mph</div>
+          <div class="meta"><b>Media circular (0,+1,+2,+3,+4):</b> ${t.mediaCircularClasificacion !== null ? t.mediaCircularClasificacion.toFixed(1) + "°" : "N/C (no aplica en este estado)"}</div>
+          <div class="meta"><b>Desviación máxima:</b> ${t.desviacionMaximaClasificacion !== null ? t.desviacionMaximaClasificacion.toFixed(1) + "°" : "N/C (no aplica en este estado)"}</div>
+          <div class="meta"><b>Clasificación (±${t.rangoGradosUsado}°, mínimo ${t.velocidadMinimaDireccionConfiable} mph):</b> <span class="${cls}">${t.clasificacion}</span></div>
+        </div>
+      </div>
+    `;
+  }
+
+  try {
+    setEstado("Fase 1: probando trayectoria de viento por zona horaria (mínimo " + porZona + " por zona)...");
+    render("<div class='small'>Buscando ET (incluye Toronto), Central, Mountain/Phoenix-Denver y Pacífico...</div>");
+
+    const buckets = { ET: [], Central: [], Mountain: [], Pacific: [] };
+    const rechazados = [];
+    const otrasZonas = [];
+
+    function cuotaCompleta() {
+      return Object.keys(buckets).every(k => buckets[k].length >= porZona);
+    }
+
+    let d = CORE.START_HIST;
+    const end = CORE.ayerISO();
+    let diasEscaneados = 0;
+    let juegosProcesados = 0;
+
+    while (d <= end && !cuotaCompleta() && diasEscaneados < TOPE_DIAS_ESCANEADOS && juegosProcesados < TOPE_JUEGOS_PROCESADOS) {
+      diasEscaneados++;
+      let games = [];
+      try {
+        games = await CORE.scheduleByDate(d);
+      } catch (e) {
+        d = CORE.addDays(d, 1);
+        continue;
+      }
+
+      for (const g of games) {
+        if (cuotaCompleta() || juegosProcesados >= TOPE_JUEGOS_PROCESADOS) break;
+        if (!CORE.esJuegoFinal(g)) continue;
+
+        const venueId = g.venue?.id;
+        if (!venueId) continue;
+        const nombreParqueSchedule = g.venue?.name;
+
+        const stadiumPrevio = (typeof stadiumGet === "function") ? stadiumGet(nombreParqueSchedule) : null;
+        const tzPrevio = stadiumPrevio && stadiumPrevio.timezone ? stadiumPrevio.timezone : null;
+        const bucketPrevio = tzPrevio ? bucketDeTz(tzPrevio) : null;
+        if (bucketPrevio && buckets[bucketPrevio].length >= porZona) continue;
+
+        let venueFull = null, coords = null;
+        try {
+          venueFull = await CORE.getVenueFull(venueId);
+          coords = CORE.coordsFromVenue(venueFull);
+        } catch (e) { continue; }
+        if (!coords) continue;
+
+        const nombreParque = nombreParqueSchedule || venueFull?.name;
+
+        juegosProcesados++;
+        let trayectoria = null;
+        try {
+          trayectoria = await CORE.getTrayectoriaVientoHistorico(coords.lat, coords.lon, g.gameDate, nombreParque);
+        } catch (e) { trayectoria = null; }
+
+        const registro = {
+          matchup: (g.teams?.away?.team?.name || "?") + " @ " + (g.teams?.home?.team?.name || "?"),
+          venue: nombreParque || "SIN PARQUE",
+          date: d,
+          trayectoria: trayectoria
+        };
+
+        if (!trayectoria || trayectoria.clasificacion === "NO_CONFIRMADO") {
+          rechazados.push(registro);
+          continue;
+        }
+
+        const bucket = bucketDeTz(trayectoria.timezoneUsado);
+        if (bucket) {
+          if (buckets[bucket].length < porZona) buckets[bucket].push(registro);
+        } else {
+          otrasZonas.push(registro);
+        }
+      }
+      d = CORE.addDays(d, 1);
+    }
+
+    const cuotaFinal = cuotaCompleta();
+    const totalConfirmados = Object.values(buckets).reduce((s, arr) => s + arr.length, 0);
+    const primeraTrayectoria = buckets.ET[0] || buckets.Central[0] || buckets.Mountain[0] || buckets.Pacific[0];
+    const rangoUsado = primeraTrayectoria?.trayectoria?.rangoGradosUsado ?? "?";
+    const velMinima = primeraTrayectoria?.trayectoria?.velocidadMinimaDireccionConfiable ?? "?";
+
+    setEstado("Fase 2: buscando un cruce real de fecha local (medianoche del parque)...");
+    let cruceEncontrado = null;
+    let d2 = CORE.START_HIST;
+    let diasEscaneadosCruce = 0;
+    let juegosProcesadosCruce = 0;
+
+    while (d2 <= end && !cruceEncontrado && diasEscaneadosCruce < TOPE_DIAS_CRUCE && juegosProcesadosCruce < TOPE_JUEGOS_CRUCE) {
+      diasEscaneadosCruce++;
+      let games2 = [];
+      try {
+        games2 = await CORE.scheduleByDate(d2);
+      } catch (e) {
+        d2 = CORE.addDays(d2, 1);
+        continue;
+      }
+
+      for (const g of games2) {
+        if (cruceEncontrado || juegosProcesadosCruce >= TOPE_JUEGOS_CRUCE) break;
+        if (!CORE.esJuegoFinal(g)) continue;
+
+        const venueId = g.venue?.id;
+        if (!venueId) continue;
+
+        let venueFull = null, coords = null;
+        try {
+          venueFull = await CORE.getVenueFull(venueId);
+          coords = CORE.coordsFromVenue(venueFull);
+        } catch (e) { continue; }
+        if (!coords) continue;
+
+        const nombreParque = g.venue?.name || venueFull?.name;
+
+        juegosProcesadosCruce++;
+        let trayectoria = null;
+        try {
+          trayectoria = await CORE.getTrayectoriaVientoHistorico(coords.lat, coords.lon, g.gameDate, nombreParque);
+        } catch (e) { trayectoria = null; }
+        if (!trayectoria) continue;
+
+        const cruce = cruceFechaLocal(trayectoria);
+        if (cruce && cruce.cruza) {
+          cruceEncontrado = {
+            matchup: (g.teams?.away?.team?.name || "?") + " @ " + (g.teams?.home?.team?.name || "?"),
+            venue: nombreParque || "SIN PARQUE",
+            date: d2,
+            trayectoria: trayectoria
+          };
+          break;
+        }
+      }
+      d2 = CORE.addDays(d2, 1);
+    }
+
+    let html = `
+      <div class="juego">
+        <div class="matchup">Prueba de trayectoria de viento — por zona horaria</div>
+        <div class="meta ${cuotaFinal ? "ok" : "bad"}">
+          ${cuotaFinal ? "Cuota completa" : "CUOTA INCOMPLETA — revisar cuáles zonas faltan"}
+          (mínimo ${porZona} confirmado(s) por zona)
+        </div>
+        <div class="meta">ET (incluye Toronto): ${buckets.ET.length}/${porZona} · Central: ${buckets.Central.length}/${porZona} · Mountain/Phoenix-Denver: ${buckets.Mountain.length}/${porZona} · Pacific: ${buckets.Pacific.length}/${porZona}</div>
+        <div class="meta">Confirmados totales en cuota: ${totalConfirmados} · Rechazados (NO_CONFIRMADO o sin trayectoria): ${rechazados.length} · Otras zonas fuera de cuota: ${otrasZonas.length}</div>
+        <div class="meta">Fase 1 — días escaneados: ${diasEscaneados} · juegos procesados: ${juegosProcesados}</div>
+        <div class="meta bad">Rango angular: ±${rangoUsado}° (NO APROBADO todavía) · Velocidad mínima para confiar en dirección: ${velMinima} mph</div>
+        <div class="small">Esto NO guardó nada en el histórico ni en localStorage — es solo para inspeccionar el cálculo.</div>
+      </div>
+    `;
+
+    ["ET", "Central", "Mountain", "Pacific"].forEach(zona => {
+      buckets[zona].forEach(r => { html += tarjetaJuego(r, "CONFIRMADO · " + zona); });
+    });
+
+    if (otrasZonas.length) {
+      html += `<div class="juego"><div class="matchup">Otras zonas horarias (fuera de las 4 requeridas)</div></div>`;
+      otrasZonas.forEach(r => { html += tarjetaJuego(r, "CONFIRMADO · OTRA ZONA"); });
+    }
+
+    if (rechazados.length) {
+      html += `<div class="juego"><div class="matchup">Rechazados (NO_CONFIRMADO o sin trayectoria)</div></div>`;
+      rechazados.forEach(r => { html += tarjetaJuego(r, "RECHAZADO"); });
+    }
+
+    html += `<div class="juego"><div class="matchup">Prueba obligatoria: cruce real de fecha local</div>
+      <div class="meta">Fase 2 — días escaneados: ${diasEscaneadosCruce} · juegos procesados: ${juegosProcesadosCruce}</div>
+    </div>`;
+
+    if (cruceEncontrado) {
+      html += tarjetaJuego(cruceEncontrado, "CRUCE DE MEDIANOCHE CONFIRMADO");
+    } else {
+      html += `
+        <div class="juego">
+          <div class="bad"><b>NO SE ENCONTRÓ ningún cruce real de fecha local</b> en ${diasEscaneadosCruce} día(s) / ${juegosProcesadosCruce} juego(s) escaneados.</div>
+          <div class="small">Esto no confirma que la lógica esté mal — solo que, dentro de este rango escaneado, ningún juego real tuvo sus 7 puntos repartidos en más de una fecha local.</div>
+        </div>
+      `;
+    }
+
+    render(html);
+    setEstado(
+      (cuotaFinal ? "Cuota completa. " : "Cuota incompleta. ") +
+      (cruceEncontrado ? "Cruce de medianoche confirmado." : "Sin cruce de medianoche encontrado en el rango escaneado.")
+    );
+  } catch (e) {
+    setEstado("ERROR REAL en probarTrayectoriaViento: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
 }
+
+function calcularCoincidencia() {
+  try {
+    if (!juegosHoy.length) { setEstado("Primero jala juegos de hoy."); return; }
+    let hist = historico2026.length ? historico2026 : CORE.leerHistoricoCache();
+    if (!hist.length) { setEstado("Primero toca JALAR HISTÓRICO 2026."); return; }
+
+    let html = "";
+    for (const g of juegosHoy) {
+      const today = climaHoy[g.gamePk];
+      const away = g.teams?.away?.team?.name || "?";
+      const home = g.teams?.home?.team?.name || "?";
+      const venue = g.venue?.name || "SIN PARQUE";
+
+      if (!today) {
+        html += `
+          <div class="juego">
+            <div class="matchup">${away} @ ${home}</div>
+            <div class="estadio">${venue}</div>
+            <div class="bad">SIN CLIMA DE HOY</div>
+          </div>
+        `;
+        continue;
+      }
+
+      const ranked = hist.map(x => ({ ...x, score: VIENTO.scoreMatch(today, x) }))
+        .sort((a, b) => b.score - a.score).slice(0, 5);
+      const top = ranked[0];
+      const cls = top?.score >= CORE.UMBRAL_OK ? "ok" : top?.score >= CORE.UMBRAL_MID ? "mid" : "bad";
+
+      html += `
+        <div class="juego">
+          <div class="matchup">${away} @ ${home}</div>
+          <div class="estadio">${venue}</div>
+          <div class="meta">Fecha: ${today.date || CORE.hoyISO()} · Hora: ${CORE.horaJuego(today.gameDate)}</div>
+          <div class="meta">Temp: ${safe(today.tempF)}°F · Humedad: ${safe(today.humidity)}% · Viento: ${safe(today.windMph)} mph · Dir: ${esNumeroReal(today.windDir) ? today.windDir + "°" : "SIN DATO"}</div>
+          <div class="match">Mejor coincidencia: <span class="${cls}">${top ? top.score : 0}%</span></div>
+          <details class="hist" style="cursor:pointer">
+            <summary style="cursor:pointer;font-weight:800">Similares históricos</summary>
+            ${ranked.map(r => `
+              <div class="small">
+                ${r.date} · ${r.away} @ ${r.home} · ${r.venue}
+                · ${safe(r.tempF)}°F
+                · viento ${safe(r.windMph)} mph
+                · dir ${esNumeroReal(r.windDir) ? r.windDir + "°" : "NO"}
+                · hum ${safe(r.humidity)}%
+                · carreras ${safe(r.totalRuns)}
+                · ponches ${safe(r.totalKs)}
+                · score ${r.score}%
+              </div>
+            `).join("")}
+          </details>
+        </div>
+      `;
+    }
+    render(html);
+    setEstado("Coincidencia calculada.");
+  } catch (e) {
+    setEstado("ERROR REAL en calcularCoincidencia: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+
+function escenaAbierta(today) {
+  const venue = today?.venue;
+  if (window.MLBPRO_ROOF_STATUS) {
+    if (window.MLBPRO_ROOF_STATUS.esDomoCerradoFijo(venue)) return "NO ABIERTA / ROOF CERRADO";
+    if (window.MLBPRO_ROOF_STATUS.esTechoNoVerificado(venue)) {
+      return "ROOF NO CONFIRMADO / " + window.MLBPRO_ROOF_STATUS.getRoofStatus(venue).label;
+    }
+  }
+  return "ABIERTA";
+}
+
+function evaluarMercados(today, pct, histCount, ranked) {
+  const escena = escenaAbierta(today);
+  const brisa = VIENTO.tipoBrisa(today);
+
+  let carreras = "NO COINCIDENCIA", ponches = "NO COINCIDENCIA";
+  let veredicto = "PASAR / NO COINCIDENCIA", favorece = "NO CONFIRMADO";
+  let promCarrerasHist = null, promPonchesHist = null;
+
+  const listaValida = Array.isArray(ranked) ? ranked.filter(x => esNumeroReal(x.totalRuns)) : [];
+  if (listaValida.length) promCarrerasHist = listaValida.reduce((s, x) => s + Number(x.totalRuns), 0) / listaValida.length;
+
+  const listaPonches = Array.isArray(ranked) ? ranked.filter(x => esNumeroReal(x.totalKs)) : [];
+  if (listaPonches.length) promPonchesHist = listaPonches.reduce((s, x) => s + Number(x.totalKs), 0) / listaPonches.length;
+
+  if (promCarrerasHist !== null) carreras = promCarrerasHist.toFixed(1) + " carreras prom. (" + listaValida.length + " juego(s) similares)";
+  if (promPonchesHist !== null) ponches = promPonchesHist.toFixed(1) + " ponches prom. (" + listaPonches.length + " juego(s) similares)";
+
+  const hpACF = (typeof getOrientacionParque !== "undefined") ? getOrientacionParque(today?.venue) : null;
+  const evViento = VIENTO.evaluarViento(today?.windDir, hpACF);
+
+  if (evViento.favoreceBateo === null) {
+    favorece = evViento.categoria === "DIRECCIÓN NO CONFIRMADA"
+      ? "NO CONFIRMADO / SIN DIRECCIÓN DE VIENTO"
+      : "NEUTRAL / CRUZADO";
+  } else if (evViento.favoreceBateo) {
+    favorece = "BATEO (viento sale hacia el jardín)";
+  } else {
+    favorece = "PICHEO (viento entra hacia home)";
+  }
+
+  const baseFuerte = pct >= 80 && histCount >= 3;
+  const baseMedia = pct >= 65 && histCount >= 3;
+  const baseDatoReal = listaValida.length >= 3;
+
+  if (window.MLBPRO_ROOF_STATUS && window.MLBPRO_ROOF_STATUS.esDomoCerradoFijo(today?.venue)) {
+    veredicto = "MIRAR SOLO MOTOR PRINCIPAL, NO CLIMA";
+    return { escena, brisa, carreras, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
+  }
+  if (window.MLBPRO_ROOF_STATUS && window.MLBPRO_ROOF_STATUS.esTechoNoVerificado(today?.venue)) {
+    veredicto = "NO FORZAR / TECHO " + window.MLBPRO_ROOF_STATUS.getRoofStatus(today?.venue).label;
+    return { escena, brisa, carreras, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
+  }
+  if (!baseDatoReal) {
+    veredicto = "SIN DATO SUFICIENTE — solo " + listaValida.length + " similar(es) con carreras confirmadas";
+    return { escena, brisa, carreras, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
+  }
+
+  if (baseFuerte && evViento.favoreceBateo === true) {
+    veredicto = "MIRAR OVER — viento favorece bateo, " + listaValida.length + " similares con " + promCarrerasHist.toFixed(1) + " carreras prom.";
+  } else if (baseFuerte && evViento.favoreceBateo === false) {
+    veredicto = "MIRAR UNDER / K — viento favorece picheo, " + listaValida.length + " similares con " + promCarrerasHist.toFixed(1) + " carreras prom.";
+  } else if (baseMedia) {
+    veredicto = "REVISAR / NO FORZAR — " + listaValida.length + " similares con " + promCarrerasHist.toFixed(1) + " carreras prom.";
+  } else {
+    veredicto = "COINCIDENCIA BAJA — " + listaValida.length + " similares con " + promCarrerasHist.toFixed(1) + " carreras prom.";
+  }
+
+  return { escena, brisa, carreras, ponches, veredicto, favorece, promCarrerasHist, promPonchesHist };
+}
+
+function renderBrujula(today, gamePk) {
+  const hpACFraw = (typeof getOrientacionParque !== "undefined") ? getOrientacionParque(today?.venue) : null;
+  const tieneOrientacion = esNumeroReal(hpACFraw);
+  const hpACF = tieneOrientacion ? Number(hpACFraw) : 0;
+  const windDir = Number(today?.windDir);
+  const tieneDir = esNumeroReal(today?.windDir);
+  const id = "brujula_" + gamePk;
+
+  const puntos16 = [
+    { g: 0, t: "N" }, { g: 22.5, t: "NNE" }, { g: 45, t: "NE" }, { g: 67.5, t: "ENE" },
+    { g: 90, t: "E" }, { g: 112.5, t: "ESE" }, { g: 135, t: "SE" }, { g: 157.5, t: "SSE" },
+    { g: 180, t: "S" }, { g: 202.5, t: "SSW" }, { g: 225, t: "SW" }, { g: 247.5, t: "WSW" },
+    { g: 270, t: "W" }, { g: 292.5, t: "WNW" }, { g: 315, t: "NW" }, { g: 337.5, t: "NNW" }
+  ];
+
+  const cx = 110, cy = 110, r = 95;
+  let marcas = "";
+  puntos16.forEach(p => {
+    const gAjustado = ((p.g - hpACF) % 360 + 360) % 360;
+    const rad = gAjustado * Math.PI / 180;
+    const esMayor = (p.g % 90 === 0);
+    const rTxt = r - (esMayor ? 16 : 12);
+    const x = cx + rTxt * Math.sin(rad), y = cy - rTxt * Math.cos(rad);
+    marcas += `<text x="${x}" y="${y + 4}" fill="${esMayor ? "#79c0ff" : "#8b949e"}" font-size="${esMayor ? 13 : 9}" font-weight="${esMayor ? 800 : 600}" text-anchor="middle">${p.t}</text>`;
+    const p1x = cx + r * Math.sin(rad), p1y = cy - r * Math.cos(rad);
+    const p2x = cx + (r - 6) * Math.sin(rad), p2y = cy - (r - 6) * Math.cos(rad);
+    marcas += `<line x1="${p1x}" y1="${p1y}" x2="${p2x}" y2="${p2y}" stroke="${esMayor ? "#e6edf3" : "#484f58"}" stroke-width="${esMayor ? 2 : 1}"/>`;
+  });
+
+  const vaHacia = tieneDir ? (windDir + 180) % 360 : 0;
+  const degAjustado = tieneDir ? ((vaHacia - hpACF) % 360 + 360) % 360 : 0;
+
+  let anguloEntrada = degAjustado;
+  if (anguloEntrada > 180) anguloEntrada -= 360;
+  const maxCono = 40;
+  const anguloClamp = Math.max(-maxCono, Math.min(maxCono, anguloEntrada));
+  const offsets = [0, -14, 14, -7, 7];
+  const radioInicio = 20, radioFin = 62;
+
+  function puntoPolar(radio, gradoOffset) {
+    const anguloTotal = anguloClamp + gradoOffset * 0.4;
+    const rad = anguloTotal * Math.PI / 180;
+    return { x: 110 + radio * Math.sin(rad), y: 152 - radio * Math.cos(rad) };
+  }
+
+  let motionPaths = "", flechitas = "";
+  if (tieneDir) {
+    offsets.forEach((off, i) => {
+      const n = i + 1;
+      const ini = puntoPolar(radioInicio, off);
+      const fin = puntoPolar(radioFin, off);
+      const dur = (1.3 + i * 0.08).toFixed(2);
+      const delay = (i * 0.22).toFixed(2);
+      const pathId = `mpath${n}-${id}`;
+      motionPaths += `<path id="${pathId}" d="M${ini.x.toFixed(1)},${ini.y.toFixed(1)} L${fin.x.toFixed(1)},${fin.y.toFixed(1)}" fill="none" stroke="none"/>`;
+      flechitas += `
+        <path d="M0,-4 L4,0 L0,4 L1.5,0 Z" fill="#58a6ff">
+          <animateMotion dur="${dur}s" begin="${delay}s" repeatCount="indefinite" rotate="auto">
+            <mpath href="#${pathId}"/>
+          </animateMotion>
+        </path>
+      `;
+    });
+  }
+
+  return `
+    <div class="match" style="text-align:center">
+      <div class="meta"><b>Brújula del parque</b></div>
+      <svg viewBox="0 0 220 220" style="width:150px;height:150px">
+        <circle cx="110" cy="110" r="95" fill="#0d1117" stroke="#30363d" stroke-width="2"/>
+        <g>${marcas}</g>
+        <g>
+          <path d="M 110,152 L 65,79 A 60,60 0 0 1 155,79 Z" fill="#1a4d2e" stroke="#2d7a4a" stroke-width="1" opacity="0.9"/>
+          <path d="M 89,152 Q 110,128 131,152" fill="none" stroke="#c9a94d" stroke-width="1" opacity="0.8"/>
+          <path d="M 83,152 Q 110,119 137,152" fill="none" stroke="#c9a94d" stroke-width="0.7" opacity="0.5"/>
+          <polygon points="110,110 128,131 110,152 92,131" stroke="#c9a94d" stroke-width="1.5" fill="none"/>
+        </g>
+        <g>${motionPaths}</g>
+        ${flechitas}
+        <circle cx="110" cy="110" r="4" fill="#e6edf3"/>
+      </svg>
+      <div class="small">
+        ${tieneDir ? `Viento de ${windDir}° hacia ${(windDir + 180) % 360}°` : "SIN DIRECCIÓN CONFIRMADA"}
+      </div>
+      ${!tieneOrientacion ? `<div class="small bad">ORIENTACIÓN NO CONFIRMADA — compás sin ajustar al parque</div>` : ""}
+    </div>
+  `;
+}
+
+function generarConclusionCoincidencia() {
+  try {
+    if (!juegosHoy.length) { setEstado("Primero jala juegos de hoy."); return; }
+    let hist = historico2026.length ? historico2026 : CORE.leerHistoricoCache();
+    if (!hist.length) { setEstado("Primero toca JALAR HISTÓRICO 2026."); return; }
+
+    let html = window.MLBPRO_CONFIDENCE_PANEL ? window.MLBPRO_CONFIDENCE_PANEL.render(juegosHoy) : "";
+
+    for (const g of juegosHoy) {
+      const today = climaHoy[g.gamePk];
+      const away = g.teams?.away?.team?.name || "?";
+      const home = g.teams?.home?.team?.name || "?";
+      const matchup = away + " @ " + home;
+      const estadio = g.venue?.name || "SIN PARQUE";
+
+      if (!today) {
+        html += `
+          <div class="juego">
+            <div class="matchup">${matchup}</div>
+            <div class="estadio">${estadio}</div>
+            <div class="bad"><b>NO COINCIDENCIA:</b> SIN CLIMA DE HOY</div>
+          </div>
+        `;
+        continue;
+      }
+
+      const todosConScore = hist.map(x => ({ ...x, score: VIENTO.scoreMatch(today, x) }));
+
+      const mismoParque = todosConScore
+        .filter(x => x.venue && today.venue &&
+          stadiumNorm(stadiumCanonName(x.venue)) === stadiumNorm(stadiumCanonName(today.venue)))
+        .sort((a, b) => b.score - a.score);
+
+      const otrosParques = todosConScore
+        .filter(x => !(x.venue && today.venue &&
+          stadiumNorm(stadiumCanonName(x.venue)) === stadiumNorm(stadiumCanonName(today.venue))))
+        .sort((a, b) => b.score - a.score);
+
+      const ranked = mismoParque.concat(otrosParques).slice(0, 5);
+
+      const top = ranked[0];
+      const pct = top ? Number(top.score || 0) : 0;
+      const histCount = mismoParque.filter(x => Number(x.score || 0) >= CORE.UMBRAL_MID).length;
+      const ev = evaluarMercados(today, pct, histCount, ranked);
+      const cls = pct >= CORE.UMBRAL_OK ? "ok" : pct >= CORE.UMBRAL_MID ? "mid" : "bad";
+
+      html += `
+        <div class="juego">
+          <div class="matchup">${matchup}</div>
+          <div class="estadio">${estadio}</div>
+          <div class="meta">Fecha: ${today.date || CORE.hoyISO()} · Hora: ${CORE.horaJuego(today.gameDate)}</div>
+          <div class="meta"><b>Clima de hoy:</b></div>
+          <div class="meta">Temp: ${safe(today.tempF)}°F</div>
+          <div class="meta">Humedad: ${safe(today.humidity)}%</div>
+          <div class="meta">Precip: ${safe(today.precip)}%</div>
+          <div class="meta">Viento: ${safe(today.windMph)} mph</div>
+          <div class="meta">Dir viento: ${esNumeroReal(today.windDir) ? today.windDir + "°" : "SIN DATO"}</div>
+          ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
+          ${renderBrujula(today, g.gamePk)}
+          <details class="match" style="cursor:pointer">
+            <summary style="cursor:pointer;font-weight:800"><b>Coincidencia clima/parque:</b> <span class="${cls}">${pct}%</span> · ${ev.carreras || "SIN DATOS"}</summary>
+            <div class="meta" style="margin-top:8px"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
+            <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
+            <div class="meta"><b>Tipo de brisa:</b> ${ev.brisa}</div>
+            <div class="meta"><b>Brisa favorece:</b> ${ev.favorece}</div>
+            <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"}</div>
+            <div class="meta"><b>Ponches:</b> ${ev.ponches || "SIN DATOS"}</div>
+          </details>
+          <div class="match"><b>Conclusión Data Madre:</b> ${ev.veredicto || "NO USAR COMO PICK"}</div>
+          <details class="hist" style="cursor:pointer">
+            <summary style="cursor:pointer;font-weight:800">Similares históricos</summary>
+            ${ranked.map((r, i) => `
+              <div class="small" style="padding:10px 0;border-bottom:1px solid #222;">
+                <div><b>${i + 1}. ${r.date}</b></div>
+                <div><b>Juego:</b> ${r.away} @ ${r.home}</div>
+                <div><b>Parque:</b> ${r.venue}</div>
+                <div><b>Clima:</b> ${safe(r.tempF)}°F · viento ${safe(r.windMph)} mph · dir ${esNumeroReal(r.windDir) ? r.windDir + "°" : "NO"} · hum ${safe(r.humidity)}%</div>
+                <div><b>Carreras:</b> ${safe(r.totalRuns)}</div>
+                <div><b>Ponches:</b> ${safe(r.totalKs)}</div>
+                <div><b>HRs:</b> ${safe(r.totalHRs)}</div>
+                <div><b>Score similitud:</b> ${r.score}%</div>
+              </div>
+            `).join("")}
+          </details>
+        </div>
+      `;
+    }
+    render(html);
+    setEstado("Conclusión de coincidencia generada.");
+  } catch (e) {
+    setEstado("ERROR REAL en generarConclusionCoincidencia: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+
+function borrarCacheHistorico() {
+  if (!confirm("¿Borrar TODO el histórico guardado? No se puede deshacer.")) return;
+  const borrado = CORE.borrarHistoricoCache();
+  if (!borrado) {
+    setEstado("ERROR: no se pudo borrar el cache histórico.");
+    return;
+  }
+  historico2026 = [];
+  render("");
+  setEstado("Cache histórico borrado. Tocá JALAR HISTÓRICO 2026 para reconstruirlo limpio.");
+}
+
+window.addEventListener("load", () => {
+  historico2026 = CORE.leerHistoricoCache();
+  if (historico2026.length) setEstado("Listo. Histórico en cache: " + historico2026.length + " filas.");
+});
+</script>
+</body>
+</html>
+```
+
+**Importante — esto es lo que tienes que verificar antes de asumir que esto arregla tu problema real:** yo confirmé con mis propios ojos que el `index.html` que está *ahora mismo* en GitHub (`juisma05-hub/mlbpro-clima-match`, rama `main`) es una versión vieja y completamente distinta — sin `mlbpro-core.js`, sin `estadios.js`, sin `trayectoriaViento`, sin nada de lo que hicimos. Si GPT dejó algo roto, **ese algo roto no está en GitHub ahora** (o al menos no en la rama `main`) — puede estar en tu dispositivo local, sin subir todavía, o en otra rama.
+
+Antes de subir este archivo, confirma dónde vive realmente el archivo roto que quieres reemplazar, para no terminar subiendo esta versión "buena" encima de la vieja de GitHub y perder de nuevo el hilo de qué es lo que realmente está desplegado.
