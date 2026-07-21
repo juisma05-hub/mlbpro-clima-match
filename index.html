@@ -30,6 +30,7 @@ button:disabled{opacity:.5}
 
 <button onclick="jalarJuegosHoy()">JALAR JUEGOS DE HOY</button>
 <button onclick="jalarHistorico2026()">JALAR HISTÓRICO 2026</button>
+<button onclick="probarTrayectoriaViento()" style="background:#1f6feb;color:#fff;">🧪 PROBAR TRAYECTORIA DE VIENTO (por zona horaria)</button>
 <button onclick="calcularCoincidencia()">CALCULAR COINCIDENCIA</button>
 <button onclick="generarConclusionCoincidencia()">CONCLUSIÓN DE COINCIDENCIA</button>
 <button onclick="borrarCacheHistorico()" style="background:#da3633;color:#fff;">🗑️ BORRAR CACHE HISTÓRICO</button>
@@ -54,25 +55,25 @@ button:disabled{opacity:.5}
      Pantalla principal. Jala juegos de hoy + clima, construye/lee el
      histórico 2026, calcula coincidencia climática, y arma la
      conclusión con veredicto de mercados (carreras/ponches) y la
-     brújula visual de viento por parque.
+     brújula visual de viento por parque. Incluye además una prueba
+     corta, de solo lectura, para auditar la trayectoria de viento de
+     7 horas antes de integrarla al histórico completo.
 
    QUÉ NO HACE (alcance actual, a propósito):
-     No calcula ni muestra F5, MoneyLine ni K6. Esta pantalla queda
-     limitada a: clima, orientación del parque, carreras, ponches e
-     histórico. Cualquier otro motor de mercado vive en sus propios
-     archivos/pantallas (fuera de index.html).
+     No calcula ni muestra F5, MoneyLine ni K6. No integra todavía
+     trayectoriaViento dentro de jalarHistorico2026() ni del histórico
+     guardado — eso es un paso futuro, pendiente de que se apruebe el
+     rango angular de clasificación (BRISA_RANGO_GRADOS, ver
+     mlbpro-core.js).
 
    ORDEN DE CARGA (no cambiar, cada uno depende del anterior):
      1. estadios.js               (stadiumNorm(), stadiumCanonName(),
                                     stadiumGet() globales — comparación
-                                    canónica de parques Y, desde esta
-                                    corrección, fuente del timezone real
-                                    que mlbpro-core.js necesita para
-                                    getClimaHistorico())
+                                    canónica de parques y fuente del
+                                    timezone real que mlbpro-core.js
+                                    necesita)
      2. parques-orientacion.js    (getOrientacionParque global)
-     3. mlbpro-core.js            (window.MLBPRO_CORE — AHORA depende
-                                    de 1 para resolver timezone por
-                                    parque; antes no dependía de nada)
+     3. mlbpro-core.js            (window.MLBPRO_CORE — depende de 1)
      4. roof-status.js            (window.MLBPRO_ROOF_STATUS)
      5. mlbpro-viento.js          (window.MLBPRO_VIENTO — usa 1, 2 y 4)
      6. confidence-panel.js       (window.MLBPRO_CONFIDENCE_PANEL — usa 3 y 4)
@@ -85,137 +86,100 @@ button:disabled{opacity:.5}
    ESTADO GLOBAL (vive solo mientras la pestaña esté abierta):
      juegosHoy   → array de juegos crudos de MLB Stats API de hoy.
      climaHoy    → objeto {gamePk: {tempF,windMph,windDir,...}} clima
-                   ACTUAL de hoy por juego. NO tiene carreras/score —
-                   nunca se usa para meter ruido de "en vivo" al cálculo.
+                   ACTUAL de hoy por juego.
      historico2026 → array de filas históricas (mismo shape que se
-                   guarda en localStorage vía MLBPRO_CORE, más los tres
-                   campos de auditoría de timezone agregados en esta
-                   corrección — ver más abajo).
+                   guarda en localStorage vía MLBPRO_CORE, incluyendo
+                   los campos de auditoría de timezone de la corrección
+                   anterior). Todavía NO incluye trayectoriaViento —
+                   eso es intencional, ver "PROBAR TRAYECTORIA DE
+                   VIENTO" abajo.
 
    VALIDACIÓN DE NÚMEROS (esNumeroReal):
      safe(x) y todas las comprobaciones de windDir/totalRuns/totalKs
      de este archivo usan esNumeroReal(v), NO Number.isFinite(Number(v))
-     a secas. Number(null)===0, Number("")===0 y Number(true)===1, así
-     que Number.isFinite(Number(v)) por sí solo convertía dato ausente
-     en un 0 (o 1) válido de forma silenciosa. esNumeroReal(v) descarta
-     explícitamente null, undefined, "", strings de solo espacios y
-     booleanos ANTES de convertir, igual que en mlbpro-viento.js.
+     a secas. esNumeroReal(v) descarta explícitamente null, undefined,
+     "", strings de solo espacios y booleanos ANTES de convertir.
 
    BOTONES → FUNCIÓN → QUÉ HACE:
      "JALAR JUEGOS DE HOY"        → jalarJuegosHoy()
-       Llena juegosHoy y climaHoy con datos EN VIVO de hoy (solo clima
-       actual, nunca marcador). Pinta tarjetas simples. SIN CAMBIOS en
-       esta corrección (getClimaActual no tiene el bug de timezone).
+       Sin cambios en ninguna corrección.
      "JALAR HISTÓRICO 2026"       → jalarHistorico2026()
-       Recorre día por día desde CORE.START_HIST hasta CORE.ayerISO()
-       (nunca incluye HOY — así un juego en curso nunca puede colarse).
-       Por cada juego del día, exige CORE.esJuegoFinal(g) === true
-       antes de pedir boxscore y guardarlo. Escribe en localStorage
-       vía CORE.guardarHistoricoCache(). Reanuda desde donde quedó si
-       ya hay cache (no repite fechas ya guardadas). CORREGIDO 21 jul
-       2026: ahora le pasa el nombre del parque a CORE.getClimaHistorico()
-       para que resuelva el timezone real de ESE parque — antes no lo
-       pasaba y la función asumía America/New_York para todos.
+       Sin cambios respecto a la versión ya probada y aprobada (pasa
+       nombreParque a CORE.getClimaHistorico() para timezone real).
+       NO llama todavía a CORE.getTrayectoriaVientoHistorico() — esa
+       integración queda pendiente de que se apruebe el rango angular.
+     "🧪 PROBAR TRAYECTORIA DE VIENTO" → probarTrayectoriaViento()
+       NUEVO en esta corrección. Prueba corta, de SOLO LECTURA: recorre
+       el calendario real desde CORE.START_HIST buscando juegos Final
+       reales, hasta reunir un mínimo configurable (por defecto 2) de
+       juegos con trayectoria CONFIRMADA (clasificacion distinta de
+       "NO_CONFIRMADO") en cada una de 4 zonas horarias: America/
+       New_York (ET), America/Chicago (Central), America/Phoenix o
+       America/Denver (Mountain, agrupadas juntas), y America/
+       Los_Angeles (Pacific). Los juegos con clasificacion ===
+       "NO_CONFIRMADO" o sin trayectoria van a una lista de rechazados
+       aparte — NUNCA se cuentan como "confirmados". Muestra, por cada
+       juego: los 7 puntos con su claveLocalUsada exacta, cuáles
+       cuentan para la clasificación (0,+1,+2,+3,+4), si hay cruce de
+       fecha local (comparando fechaLocalUsada entre los 7 puntos),
+       dirección inicio/final, velocidad min/máx/prom, media circular,
+       desviación máxima y la clasificación resultante. Pre-filtra sin
+       red (usando stadiumGet() directo, antes de gastar una llamada a
+       Open-Meteo) los juegos de una zona que ya cumplió su cuota,
+       para no desperdiciar llamadas. Tiene dos topes de seguridad
+       (días escaneados y juegos procesados) para no correr indefinido
+       si alguna zona no aparece en el rango de fechas disponible.
+       NO TOCA localStorage, NO TOCA historico2026, NO llama a
+       jalarHistorico2026() ni a guardarHistoricoCache() — es
+       puramente de auditoría/inspección.
      "CALCULAR COINCIDENCIA"      → calcularCoincidencia()
-       Compara climaHoy contra historico2026 con VIENTO.scoreMatch().
-       Requiere haber jalado juegos de hoy Y histórico primero.
+       Sin cambios.
      "CONCLUSIÓN DE COINCIDENCIA" → generarConclusionCoincidencia()
-       Igual que arriba pero además arma veredicto de mercados
-       (evaluarMercados), brújula (renderBrujula), y panel de
-       confianza arriba de todo (MLBPRO_CONFIDENCE_PANEL.render).
+       Sin cambios.
      "BORRAR CACHE HISTÓRICO"     → borrarCacheHistorico()
-       Pide confirmación, llama a CORE.borrarHistoricoCache() (único
-       punto real de borrado — index.html ya no toca localStorage
-       directo) y vacía historico2026 en memoria SOLO si el borrado
-       devolvió true. Si CORE.borrarHistoricoCache() devuelve false,
-       muestra error y NO afirma que se borró. Después hay que volver
-       a tocar "JALAR HISTÓRICO 2026" para reconstruirlo. IMPORTANTE
-       tras esta corrección: como el shape de la fila histórica cambió
-       (se agregaron 3 campos de auditoría de timezone), lo más limpio
-       es borrar el cache viejo y reconstruirlo desde cero para que
-       TODAS las filas tengan timezone corregido — filas viejas
-       guardadas con la lógica anterior (ET fijo) van a seguir en el
-       cache tal cual quedaron hasta que se borren y se vuelvan a
-       jalar.
+       Sin cambios.
 
-   FUNCIONES INTERNAS CLAVE — QUÉ RECIBEN / QUÉ DEVUELVEN:
-     escenaAbierta(today) → string. Etiqueta de techo SOLO para
-       mostrar (lee ROOF_STATUS.esDomoCerradoFijo/esTechoNoVerificado
-       — no decide nada por su cuenta, es texto derivado).
-     evaluarMercados(today, pct, histCount, ranked) → {escena, brisa,
-       carreras, ponches, veredicto, favorece, promCarrerasHist,
-       promPonchesHist}. El cerebro del veredicto final (solo carreras
-       y ponches; sin F5). today = fila de clima de hoy de un juego.
-       pct = score del mejor histórico (ya con prioridad de mismo
-       parque aplicada). histCount = SOLO históricos del mismo parque
-       canónico (stadiumNorm(stadiumCanonName())) que pasan UMBRAL_MID
-       — no cuenta históricos de otros parques aunque tengan score alto.
-       ranked = hasta 5 históricos: primero TODOS los del mismo parque
-       ordenados por score, completado con otros parques solo si faltan
-       para llegar a 5 (armado en generarConclusionCoincidencia, no acá).
-       La decisión de si favorece bateo o pitcheo SIEMPRE sale de
-       VIENTO.evaluarViento() — este archivo no reimplementa esa
-       lógica, solo traduce el resultado a texto.
-     renderBrujula(today, gamePk) → string HTML/SVG. Dibuja la brújula
-       animada, consumiendo VIENTO para la convención física: today.windDir
-       es "de dónde viene"; internamente suma 180° para animar "hacia
-       dónde va" (documentado también en mlbpro-viento.js). Si
-       getOrientacionParque() no devuelve un número real (esNumeroReal),
-       la brújula NO rota con un grado inventado: usa hpACF=0 (compás
-       sin ajustar al parque, orientación absoluta) y muestra la
-       etiqueta "ORIENTACIÓN NO CONFIRMADA" debajo. Esto no decide
-       bateo/pitcheo, es puramente visual.
+   FUNCIONES INTERNAS CLAVE:
+     escenaAbierta(), evaluarMercados(), renderBrujula() → sin cambios,
+     ver corrección anterior para el detalle completo de cada una.
 
    QUÉ TOCA:
-     DOM: #estado, #lista. localStorage: vía MLBPRO_CORE únicamente
-     (nunca llama a localStorage directo).
+     DOM: #estado, #lista. localStorage: vía MLBPRO_CORE únicamente,
+     y SOLO desde jalarHistorico2026()/borrarCacheHistorico() — 
+     probarTrayectoriaViento() no toca localStorage bajo ninguna
+     circunstancia.
 
-   SI SE AGREGA OTRO MOTOR DE MERCADO (fuera del alcance actual):
-     - Nueva fecha/hora → usar CORE.hoyISO()/horaJuego(), nunca crear otra.
-     - Nuevo umbral de coincidencia → usar CORE.UMBRAL_OK/UMBRAL_MID.
-     - Nuevo gate de techo/domo → preguntarle a ROOF_STATUS, no
-       reimplementar lista de parques con techo.
-     - Nueva pantalla que necesite el histórico → CORE.leerHistoricoCache(),
-       nunca leer localStorage con la clave a mano (así si el nombre
-       de la clave cambia algún día, solo hay que tocarlo en un lugar).
-     - Nueva comparación de parque → stadiumNorm(stadiumCanonName(...))
-       en ambos lados, nunca comparar el string crudo de venue.
-     - Nueva hora local de parque → CORE.getClimaHistorico() ya resuelve
-       esto internamente vía stadiumGet(); ningún archivo nuevo debe
-       reimplementar su propia conversión de timezone por parque.
-
-   CORRECCIÓN 21 jul 2026 — zona horaria real del histórico:
-   - jalarHistorico2026() ahora llama a
-     CORE.getClimaHistorico(coords.lat, coords.lon, d, g.gameDate,
-     g.venue?.name || venueFull?.name) — el quinto argumento
-     (nombre del parque) es nuevo. Antes se llamaba sin ese argumento
-     y la función asumía America/New_York para cualquier parque.
-   - Si CORE.getClimaHistorico() devuelve null (parque o timezone no
-     confirmados), el comportamiento NO cambió: el juego se salta
-     (saltados++) igual que ya pasaba antes cuando faltaba cualquier
-     otro dato — no se agregó ningún caso nuevo de manejo de error,
-     solo una razón nueva por la que null puede ocurrir.
-   - Las filas nuevas del histórico ahora incluyen, además de los
-     campos de siempre, timezoneUsado, horaLocalObjetivo y
-     horaClimaUtilizada (vienen ya armados dentro de "clima" —
-     ver el objeto que devuelve CORE.getClimaHistorico()). Se agregan
-     tal cual al registro que se guarda, sin tocar ningún campo
-     existente — Coincidencia (VIENTO.scoreMatch) sigue leyendo
-     exactamente los mismos campos de antes.
-   - NO se agregó "trayectoria de siete horas" ni ninguna lógica nueva
-     de rango horario en esta corrección — eso queda pendiente para
-     otra tarea, tal como se pidió.
+   CORRECCIÓN 21 jul 2026 (esta pasada) — prueba corta de trayectoria
+   de viento por zona horaria:
+   - Se agregó UN botón nuevo ("🧪 PROBAR TRAYECTORIA DE VIENTO") y UNA
+     función nueva (probarTrayectoriaViento()). No se duplicó ninguna
+     versión anterior de esta función ni quedó ningún fragmento suelto.
+   - Se eliminó por completo la referencia rota a
+     BRISA_RANGO_GRADOS_MOSTRAR() (intentaba acceder a una constante
+     privada del closure de mlbpro-core.js, que no está expuesta en
+     window.MLBPRO_CORE). El rango angular usado se lee directamente
+     del campo rangoGradosUsado que ya viene en cada objeto de
+     trayectoria devuelto por CORE.getTrayectoriaVientoHistorico().
+   - jalarHistorico2026(), calcularCoincidencia(),
+     generarConclusionCoincidencia(), evaluarMercados(), renderBrujula()
+     y borrarCacheHistorico() quedan exactamente iguales a la versión
+     ya probada y aprobada — ninguna de estas se tocó.
 
    ESTADO:
-     NO_CONFIRMADO — correcciones aplicadas por lectura de código.
-     Pendiente de prueba real que confirme, ADEMÁS de lo que ya estaba
-     pendiente de la corrección anterior: (h) que JALAR HISTÓRICO 2026
-     no tira 404 de Open-Meteo para ningún parque, (i) que la consola
-     queda limpia, (j) que al menos un parque de cada zona horaria
-     (Este, Central, Mountain/Phoenix, Pacífico) muestra su hora local
-     correcta en los campos de auditoría nuevos, y (k) que ya no
-     aparecen demasiados juegos con la misma dirección de viento
-     repetida en parques fuera de la zona Este.
+     Zona horaria/fecha local del histórico (getClimaHistorico) →
+     PROBADO Y APROBADO por Perez (1,520 filas, 4/4 zonas PASS).
+     Trayectoria de viento de 7 horas (getTrayectoriaVientoHistorico) →
+     lógica de cálculo aprobada; rango angular BRISA_RANGO_GRADOS=30
+     propuesto por Perez como punto de partida, TODAVÍA NO aprobado
+     como definitivo (rangoAprobado: false en el propio dato). Esta
+     pantalla de prueba corta (probarTrayectoriaViento) está lista
+     para correrse, pendiente de que Perez la ejecute en el navegador
+     real y revise las 4 zonas + los casos de cruce de medianoche
+     antes de decidir si se integra a jalarHistorico2026() para
+     reconstruir el histórico completo (~1,500 filas).
+
+   FECHA:
+     21 jul 2026.
    ============================================================ */
 const CORE = window.MLBPRO_CORE;
 const VIENTO = window.MLBPRO_VIENTO;
@@ -227,13 +191,6 @@ let historico2026 = [];
 function setEstado(t) { document.getElementById("estado").textContent = t; }
 function render(html) { document.getElementById("lista").innerHTML = html; }
 
-// Valida que `v` sea un número real usable (no null, no undefined, no
-// "", no string de solo espacios, no booleano). Number(null)===0 y
-// Number("")===0, y Number.isFinite de eso da true — por eso no basta
-// con Number.isFinite(Number(v)): eso convertía silenciosamente dato
-// ausente en un 0 válido. Misma validación que esNumeroReal() en
-// mlbpro-viento.js, reimplementada aquí porque index.html no puede
-// importar una función interna de otro módulo.
 function esNumeroReal(v) {
   if (v === null || v === undefined || v === "") return false;
   if (typeof v === "boolean") return false;
@@ -349,9 +306,6 @@ async function jalarHistorico2026() {
       }
 
       for (const g of games) {
-        // Único gate válido: el juego tiene que ser Final de verdad.
-        // Cualquier otro estado (en vivo, programado, suspendido,
-        // postponed, cancelado) se salta sin escribir nada al cache.
         if (!CORE.esJuegoFinal(g)) { saltados++; continue; }
 
         const venueId = g.venue?.id;
@@ -364,10 +318,6 @@ async function jalarHistorico2026() {
         } catch (e) { saltados++; continue; }
         if (!coords) { saltados++; continue; }
 
-        // CORREGIDO 21 jul 2026: se agrega el nombre del parque como
-        // quinto argumento, para que getClimaHistorico() resuelva su
-        // timezone real (vía stadiumGet en estadios.js) en vez de
-        // asumir America/New_York para todos los parques.
         const nombreParque = g.venue?.name || venueFull?.name;
 
         let clima = null;
@@ -396,7 +346,6 @@ async function jalarHistorico2026() {
           precip: clima.precip,
           windMph: clima.windMph,
           windDir: clima.windDir,
-          // Campos de auditoría nuevos — no reemplazan nada de arriba.
           timezoneUsado: clima.timezoneUsado,
           horaLocalObjetivo: clima.horaLocalObjetivo,
           horaClimaUtilizada: clima.horaClimaUtilizada,
@@ -428,6 +377,196 @@ async function jalarHistorico2026() {
     setEstado("Histórico actualizado: " + rows.length + " filas · " + saltados + " saltados.");
   } catch (e) {
     setEstado("Error histórico: " + e.message);
+  }
+}
+
+// PRUEBA CORTA de trayectoria de viento, por zona horaria — NO toca
+// localStorage, NO toca historico2026, NO llama a jalarHistorico2026().
+// Solo lectura. Ver prólogo arriba para el detalle completo.
+async function probarTrayectoriaViento(porZona) {
+  porZona = porZona || 2;
+  const TOPE_DIAS_ESCANEADOS = 90;
+  const TOPE_JUEGOS_PROCESADOS = 150;
+
+  function bucketDeTz(tz) {
+    if (tz === "America/New_York") return "ET";
+    if (tz === "America/Chicago") return "Central";
+    if (tz === "America/Phoenix" || tz === "America/Denver") return "Mountain";
+    if (tz === "America/Los_Angeles") return "Pacific";
+    return null;
+  }
+
+  function cruceFechaLocal(t) {
+    if (!t || !Array.isArray(t.puntos)) return null;
+    const fechas = t.puntos.map(p => p.fechaLocalUsada).filter(Boolean);
+    const unicas = [...new Set(fechas)];
+    return { cruza: unicas.length > 1, fechas: unicas };
+  }
+
+  function tarjetaJuego(r, etiqueta) {
+    const t = r.trayectoria;
+    if (!t) {
+      return `
+        <div class="juego">
+          <div class="matchup">${r.matchup} <span class="bad">[${etiqueta}]</span></div>
+          <div class="estadio">${r.venue} · ${r.date}</div>
+          <div class="bad">Sin trayectoria (Open-Meteo no devolvió datos usables)</div>
+        </div>
+      `;
+    }
+    const cruce = cruceFechaLocal(t);
+    const cls = t.clasificacion === "BRISA_ESTABLE" ? "ok" : (t.clasificacion === "BRISA_CAMBIANTE" ? "bad" : "mid");
+
+    return `
+      <div class="juego">
+        <div class="matchup">${r.matchup} <span class="${etiqueta === 'RECHAZADO' ? 'bad' : 'ok'}">[${etiqueta}]</span></div>
+        <div class="estadio">${r.venue} · ${r.date} · ${t.timezoneUsado}</div>
+        ${cruce && cruce.cruza ? `<div class="meta bad">⚠ CRUZA FECHA LOCAL: ${cruce.fechas.join(" → ")}</div>` : `<div class="small">Sin cruce de fecha local (todos los puntos en la misma fecha).</div>`}
+        <details class="hist" style="cursor:pointer">
+          <summary style="cursor:pointer;font-weight:800">Los 7 puntos capturados</summary>
+          ${t.puntos.map(p => {
+            const cuenta = t.offsetsClasificacion.includes(p.offsetHoras);
+            return `
+              <div class="small">
+                offset ${p.offsetHoras >= 0 ? "+" + p.offsetHoras : p.offsetHoras}h ·
+                clave ${p.claveLocalUsada ?? "N/C"} ·
+                viene de ${p.windFromDeg ?? "N/C"}° · va hacia ${p.windToDeg ?? "N/C"}° ·
+                ${p.windMph ?? "N/C"} mph
+                ${cuenta ? " · <b>cuenta para clasificar</b>" : " · <i>prejuego, no cuenta</i>"}
+              </div>
+            `;
+          }).join("")}
+        </details>
+        <div class="match">
+          <div class="meta"><b>Dirección inicio (offset 0):</b> ${t.direccionInicio ?? "N/C"}°</div>
+          <div class="meta"><b>Dirección final (offset +4):</b> ${t.direccionFinal ?? "N/C"}°</div>
+          <div class="meta"><b>Velocidad min/máx/prom:</b> ${t.velocidadMin ?? "N/C"} / ${t.velocidadMax ?? "N/C"} / ${t.velocidadProm ?? "N/C"} mph</div>
+          <div class="meta"><b>Media circular (0,+1,+2,+3,+4):</b> ${t.mediaCircularClasificacion !== null ? t.mediaCircularClasificacion.toFixed(1) + "°" : "N/C"}</div>
+          <div class="meta"><b>Desviación máxima:</b> ${t.desviacionMaximaClasificacion !== null ? t.desviacionMaximaClasificacion.toFixed(1) + "°" : "N/C"}</div>
+          <div class="meta"><b>Clasificación (±${t.rangoGradosUsado}°):</b> <span class="${cls}">${t.clasificacion}</span></div>
+        </div>
+      </div>
+    `;
+  }
+
+  try {
+    setEstado("Probando trayectoria de viento por zona horaria (mínimo " + porZona + " por zona)...");
+    render("<div class='small'>Buscando ET, Central, Mountain/Phoenix-Denver y Pacífico...</div>");
+
+    const buckets = { ET: [], Central: [], Mountain: [], Pacific: [] };
+    const rechazados = [];
+    const otrasZonas = [];
+
+    function cuotaCompleta() {
+      return Object.keys(buckets).every(k => buckets[k].length >= porZona);
+    }
+
+    let d = CORE.START_HIST;
+    const end = CORE.ayerISO();
+    let diasEscaneados = 0;
+    let juegosProcesados = 0;
+
+    while (d <= end && !cuotaCompleta() && diasEscaneados < TOPE_DIAS_ESCANEADOS && juegosProcesados < TOPE_JUEGOS_PROCESADOS) {
+      diasEscaneados++;
+      let games = [];
+      try {
+        games = await CORE.scheduleByDate(d);
+      } catch (e) {
+        d = CORE.addDays(d, 1);
+        continue;
+      }
+
+      for (const g of games) {
+        if (cuotaCompleta() || juegosProcesados >= TOPE_JUEGOS_PROCESADOS) break;
+        if (!CORE.esJuegoFinal(g)) continue;
+
+        const venueId = g.venue?.id;
+        if (!venueId) continue;
+        const nombreParqueSchedule = g.venue?.name;
+
+        const stadiumPrevio = (typeof stadiumGet === "function") ? stadiumGet(nombreParqueSchedule) : null;
+        const tzPrevio = stadiumPrevio && stadiumPrevio.timezone ? stadiumPrevio.timezone : null;
+        const bucketPrevio = tzPrevio ? bucketDeTz(tzPrevio) : null;
+        if (bucketPrevio && buckets[bucketPrevio].length >= porZona) continue;
+
+        let venueFull = null, coords = null;
+        try {
+          venueFull = await CORE.getVenueFull(venueId);
+          coords = CORE.coordsFromVenue(venueFull);
+        } catch (e) { continue; }
+        if (!coords) continue;
+
+        const nombreParque = nombreParqueSchedule || venueFull?.name;
+
+        juegosProcesados++;
+        let trayectoria = null;
+        try {
+          trayectoria = await CORE.getTrayectoriaVientoHistorico(coords.lat, coords.lon, g.gameDate, nombreParque);
+        } catch (e) { trayectoria = null; }
+
+        const registro = {
+          matchup: (g.teams?.away?.team?.name || "?") + " @ " + (g.teams?.home?.team?.name || "?"),
+          venue: nombreParque || "SIN PARQUE",
+          date: d,
+          trayectoria: trayectoria
+        };
+
+        if (!trayectoria || trayectoria.clasificacion === "NO_CONFIRMADO") {
+          rechazados.push(registro);
+          continue;
+        }
+
+        const bucket = bucketDeTz(trayectoria.timezoneUsado);
+        if (bucket) {
+          if (buckets[bucket].length < porZona) buckets[bucket].push(registro);
+        } else {
+          otrasZonas.push(registro);
+        }
+      }
+      d = CORE.addDays(d, 1);
+    }
+
+    const cuotaFinal = cuotaCompleta();
+    const totalConfirmados = Object.values(buckets).reduce((s, arr) => s + arr.length, 0);
+    const primeraTrayectoria = buckets.ET[0] || buckets.Central[0] || buckets.Mountain[0] || buckets.Pacific[0];
+    const rangoUsado = primeraTrayectoria?.trayectoria?.rangoGradosUsado ?? "?";
+
+    let html = `
+      <div class="juego">
+        <div class="matchup">Prueba de trayectoria de viento — por zona horaria</div>
+        <div class="meta ${cuotaFinal ? "ok" : "bad"}">
+          ${cuotaFinal ? "Cuota completa" : "CUOTA INCOMPLETA — revisar cuáles zonas faltan"}
+          (mínimo ${porZona} confirmado(s) por zona)
+        </div>
+        <div class="meta">ET: ${buckets.ET.length}/${porZona} · Central: ${buckets.Central.length}/${porZona} · Mountain/Phoenix-Denver: ${buckets.Mountain.length}/${porZona} · Pacific: ${buckets.Pacific.length}/${porZona}</div>
+        <div class="meta">Confirmados totales en cuota: ${totalConfirmados} · Rechazados (NO_CONFIRMADO o sin trayectoria): ${rechazados.length} · Otras zonas fuera de cuota: ${otrasZonas.length}</div>
+        <div class="meta">Días de calendario escaneados: ${diasEscaneados} · Juegos procesados (llamadas a Open-Meteo de trayectoria): ${juegosProcesados}</div>
+        <div class="meta bad">Rango angular usado: ±${rangoUsado}° — NO APROBADO todavía</div>
+        <div class="small">Esto NO guardó nada en el histórico ni en localStorage — es solo para inspeccionar el cálculo.</div>
+      </div>
+    `;
+
+    ["ET", "Central", "Mountain", "Pacific"].forEach(zona => {
+      buckets[zona].forEach(r => { html += tarjetaJuego(r, "CONFIRMADO · " + zona); });
+    });
+
+    if (otrasZonas.length) {
+      html += `<div class="juego"><div class="matchup">Otras zonas horarias (fuera de las 4 requeridas)</div></div>`;
+      otrasZonas.forEach(r => { html += tarjetaJuego(r, "CONFIRMADO · OTRA ZONA"); });
+    }
+
+    if (rechazados.length) {
+      html += `<div class="juego"><div class="matchup">Rechazados (NO_CONFIRMADO o sin trayectoria)</div></div>`;
+      rechazados.forEach(r => { html += tarjetaJuego(r, "RECHAZADO"); });
+    }
+
+    render(html);
+    setEstado(cuotaFinal
+      ? "Prueba completa: cuota cumplida en las 4 zonas."
+      : "Prueba terminada SIN cuota completa — revisar qué zonas faltaron.");
+  } catch (e) {
+    setEstado("ERROR REAL en probarTrayectoriaViento: " + (e && e.message ? e.message : e));
+    console.error(e);
   }
 }
 
@@ -493,9 +632,6 @@ function calcularCoincidencia() {
   }
 }
 
-// Solo devuelve la etiqueta de escena para MOSTRAR. La decisión real
-// de si se usa clima o no la toma tipoBrisa()/evaluarMercados() leyendo
-// roof-status.js directo (campos estructurados), no comparando texto.
 function escenaAbierta(today) {
   const venue = today?.venue;
   if (window.MLBPRO_ROOF_STATUS) {
@@ -570,11 +706,6 @@ function evaluarMercados(today, pct, histCount, ranked) {
 function renderBrujula(today, gamePk) {
   const hpACFraw = (typeof getOrientacionParque !== "undefined") ? getOrientacionParque(today?.venue) : null;
   const tieneOrientacion = esNumeroReal(hpACFraw);
-  // Sin orientación real confirmada, NO se inventa un grado (antes
-  // caía a 45°). hpACF queda en 0, que en la rotación de abajo
-  // equivale a "no rotar": el compás se muestra en su orientación
-  // absoluta (N arriba), no ajustada al parque, y se avisa con la
-  // etiqueta "ORIENTACIÓN NO CONFIRMADA" debajo.
   const hpACF = tieneOrientacion ? Number(hpACFraw) : 0;
   const windDir = Number(today?.windDir);
   const tieneDir = esNumeroReal(today?.windDir);
@@ -601,8 +732,6 @@ function renderBrujula(today, gamePk) {
     marcas += `<line x1="${p1x}" y1="${p1y}" x2="${p2x}" y2="${p2y}" stroke="${esMayor ? "#e6edf3" : "#484f58"}" stroke-width="${esMayor ? 2 : 1}"/>`;
   });
 
-  // windDir = de DONDE viene el viento. Va HACIA windDir+180, ajustado
-  // a la orientación del parque.
   const vaHacia = tieneDir ? (windDir + 180) % 360 : 0;
   const degAjustado = tieneDir ? ((vaHacia - hpACF) % 360 + 360) % 360 : 0;
 
@@ -619,12 +748,6 @@ function renderBrujula(today, gamePk) {
     return { x: 110 + radio * Math.sin(rad), y: 152 - radio * Math.cos(rad) };
   }
 
-  // Animación con SMIL nativo de SVG (animateMotion + mpath), NO con
-  // CSS transform-box:fill-box. Esa versión anterior se veía bien en
-  // Chrome de escritorio pero es inconsistente/rota en Safari de
-  // iPhone (donde probablemente la estás viendo) — las flechitas
-  // quedaban invisibles o quietas. animateMotion es una animación
-  // SVG nativa, soportada de forma confiable en Safari/iOS.
   let motionPaths = "", flechitas = "";
   if (tieneDir) {
     offsets.forEach((off, i) => {
@@ -695,12 +818,8 @@ function generarConclusionCoincidencia() {
         continue;
       }
 
-      // 1) Score de TODO el histórico (sin cortar todavía).
       const todosConScore = hist.map(x => ({ ...x, score: VIENTO.scoreMatch(today, x) }));
 
-      // 2) Separar por parque canónico (mismo parque de hoy vs el resto),
-      // cada grupo ordenado por score. Sin duplicados: son particiones
-      // mutuamente excluyentes del mismo array.
       const mismoParque = todosConScore
         .filter(x => x.venue && today.venue &&
           stadiumNorm(stadiumCanonName(x.venue)) === stadiumNorm(stadiumCanonName(today.venue)))
@@ -711,16 +830,10 @@ function generarConclusionCoincidencia() {
           stadiumNorm(stadiumCanonName(x.venue)) === stadiumNorm(stadiumCanonName(today.venue))))
         .sort((a, b) => b.score - a.score);
 
-      // 3) Mismo parque primero, se completa con otros parques SOLO si
-      // faltan para llegar a 5. El corte a 5 pasa acá, al final.
       const ranked = mismoParque.concat(otrosParques).slice(0, 5);
 
       const top = ranked[0];
       const pct = top ? Number(top.score || 0) : 0;
-      // histCount: SOLO históricos del mismo parque canónico que pasan
-      // UMBRAL_MID — sobre el grupo completo de mismoParque (no solo los
-      // 5 visibles), así el número no se recorta artificialmente si hay
-      // más de 5 juegos reales del mismo parque por encima del umbral.
       const histCount = mismoParque.filter(x => Number(x.score || 0) >= CORE.UMBRAL_MID).length;
       const ev = evaluarMercados(today, pct, histCount, ranked);
       const cls = pct >= CORE.UMBRAL_OK ? "ok" : pct >= CORE.UMBRAL_MID ? "mid" : "bad";
