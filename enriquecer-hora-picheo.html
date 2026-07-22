@@ -291,7 +291,7 @@ async function fetchScheduleUnJuego(gamePk) {
   return null;
 }
 async function fetchFeedLive(gamePk) {
-  const url = MLB_ROUTES.WORKER_BASE + encodeURIComponent(`${MLB_BASE}/game/${gamePk}/feed/live`);
+  const url = MLB_ROUTES.WORKER_BASE + encodeURIComponent(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`);
   return await fetchJSONConReintento(url, REINTENTOS_BOXSCORE);
 }
 
