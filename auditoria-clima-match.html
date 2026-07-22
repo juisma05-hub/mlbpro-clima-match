@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MLBPro · Auditoría Clima Match</title>
+<style>
+body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:18px;color:#f5c518;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin-bottom:14px}
+button{width:100%;padding:14px;margin:6px 0;font-size:14px;font-weight:800;color:#000;background:#f5c518;border:none;border-radius:12px}
+button:disabled{opacity:.5}
+button.alt{background:#1f6feb;color:#fff}
+button.warn{background:#da3633;color:#fff}
+#estado{margin:12px 0;font-size:13px;color:#9ad}
+.bloque{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+.titulo{font-size:15px;font-weight:800;color:#fff;margin-bottom:8px}
+.meta{font-size:13px;color:#ddd;margin:4px 0}
+.ok{color:#32d74b;font-weight:800}
+.mid{color:#ffd60a;font-weight:800}
+.bad{color:#ff453a;font-weight:800}
+.small{font-size:12px;color:#aaa;margin-top:5px}
+.tabla{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.tabla th,.tabla td{border:1px solid #222;padding:5px;text-align:left;color:#ccc}
+.tabla th{background:#151515;color:#f5c518}
+details{margin-top:6px}
+summary{cursor:pointer;font-weight:800;color:#79c0ff}
+</style>
+</head>
+<body>
+<h1>MLBPro · Auditoría Clima Match</h1>
+<div class="sub">Solo lectura · no escribe ninguna caché · no toca index.html, Core, F5, Coincidencia, trayectoria ni brújula</div>
+
+<button onclick="fase1_cruceGamePk()">1) CRUZAR DATA MADRE + F5 + PITCHERS</button>
+<button class="alt" onclick="fase2_resolverHoras()">2) RESOLVER HORAS (schedule por rango, 1 llamada)</button>
+<button class="warn" onclick="fase3_escanearClavesLinea()">3) ESCANEAR CLAVES DE LÍNEA / ODDS</button>
+
+<div id="estado">Listo.</div>
+<div id="reporte"></div>
+
+<script src="mlb-routes.js"></script>
+<script src="estadios.js"></script>
+<script src="pitchers-master.js"></script>
+
+<script>
+/* ============================================================
+   PRÓLOGO — auditoria-clima-match.html
+   ============================================================
+   QUÉ ES:
+     Herramienta de auditoría de SOLO LECTURA para MLBPro Clima
+     Match. No modifica, guarda, borra ni fusiona ninguna caché de
+     localStorage. No toca index.html, mlbpro-core.js, F5,
+     Coincidencia, trayectoria de viento ni brújula. Mide, con datos
+     reales, qué tanto se puede enriquecer el histórico de Clima
+     Match (MLBPRO_DATA_MADRE_HIST_2026_V1) con picheo real, hora
+     real del juego, y línea histórica de mercado.
+
+   IMPORTANTE — SIN CIFRA FIJA:
+     Esta herramienta NUNCA asume ni depende de un número fijo de
+     filas en el histórico. El total real se LEE del caché en el
+     momento de ejecutar cada fase (filasDM.length), porque el caché
+     se sigue reconstruyendo y su tamaño cambia entre corridas.
+     Cualquier número que aparezca en el reporte es el resultado de
+     leer localStorage al momento de correr la fase, no un valor
+     grabado de antemano en este archivo.
+
+   FUENTES QUE LEE (todas de solo lectura):
+     - MLBPRO_DATA_MADRE_HIST_2026_V1 (localStorage).
+     - F5_HISTORICO_CARRERAJE_2026 (localStorage).
+     - PITCHERS_MASTER_2026 (variable global, pitchers-master.js) —
+       SNAPSHOT ACTUAL, no point-in-time. Todo dato resuelto desde
+       aquí (name, era, xera) se etiqueta en el reporte como
+       PERFIL_ACTUAL_DEL_PITCHER, nunca como "calidad real del
+       pitcher en la fecha histórica del juego" — son cosas
+       distintas y esta herramienta no las confunde.
+     - MLB Stats API, endpoint schedule por RANGO de fechas
+       (startDate/endDate), UNA sola llamada para todo el histórico
+       — no una llamada por gamePk. Ni Data Madre ni F5_HISTORICO_
+       CARRERAJE_2026 conservan gameDate/hora, así que esta es la
+       única fuente real de hora.
+     - stadiumGet() de estadios.js — timezone real del parque.
+     - Todas las claves reales de localStorage, recorridas con
+       localStorage.length / localStorage.key(i) (no con
+       Object.keys(localStorage), para que funcione igual en
+       Safari/iOS), filtradas por patrón de nombre relacionado con
+       línea/odds/total/Over/Under.
+
+   FASE 1 — cruce por gamePk + duplicados:
+     Lee ambas cachés completas (su tamaño real, sea cual sea).
+     Reporta, todo medido y no asumido:
+       - filas de Data Madre sin gamePk (null/vacío);
+       - gamePk duplicados dentro de Data Madre (y cuántas filas
+         representan);
+       - gamePk duplicados dentro de F5_HISTORICO_CARRERAJE_2026;
+       - cruces únicos reales (gamePk distintos presentes en ambas
+         cachés, sin contar duplicados dos veces);
+       - filas de F5 cuyo gamePk NO existe en Data Madre;
+       - de los cruces, cuántos tienen ambos abridores confirmados;
+       - de esos, cuántos resuelven nombre + PERFIL_ACTUAL_DEL_
+         PITCHER (era/xera) para ambos vía PITCHERS_MASTER_2026;
+       - lista de pitcher_id que no están en la tabla maestra.
+
+   FASE 2 — resolución de horas, UNA sola llamada por rango:
+     En vez de consultar /schedule?gamePk=X una vez por cada juego
+     (que con el histórico actual serían cientos o miles de
+     llamadas, capaces de saturar el proxy y disparar límites), esta
+     fase:
+       1. Lee TODAS las fechas (date) presentes en Data Madre y
+          calcula la fecha mínima y máxima reales del caché.
+       2. Hace UNA sola llamada a
+          ${MLB_BASE}/schedule?sportId=1&startDate=<min>&endDate=<max>&hydrate=venue
+          vía el proxy (MLB_ROUTES.WORKER_BASE).
+       3. Construye un Map en memoria: gamePk (string) -> { gameDate
+          UTC real, nombre de venue } a partir de esa única
+          respuesta.
+       4. Recorre TODAS las filas de Data Madre (no solo las que
+          cruzaron con F5 en la Fase 1) y resuelve, para cada una
+          que tenga match en el Map: timestamp UTC, timezone real
+          del parque (stadiumGet), fecha local y hora local. La hora
+          NO depende de tener picheo confirmado — se mide para toda
+          Data Madre porque queremos poder enriquecer hora incluso
+          en juegos donde el abridor no se pudo confirmar en F5.
+       5. Lee F5_HISTORICO_CARRERAJE_2026 de forma independiente
+          (no depende de que la Fase 1 se haya corrido antes) para
+          poder reportar el subconjunto de horas confirmadas DENTRO
+          de los juegos que sí tienen cruce F5, por separado del
+          total general.
+     Reporta, siempre por separado: horas confirmadas en TODA Data
+     Madre, y horas confirmadas dentro del subconjunto con cruce F5.
+     Ningún faltante se convierte en una hora inventada — se
+     etiqueta SIN_MATCH_SCHEDULE, SIN_TIMEZONE_VENUE o
+     GAMEDATE_INVALIDO según corresponda.
+
+   FASE 3 — escaneo de claves de línea/odds, con reconocimiento de
+   la estructura real de lineas_mercado_pregame_v4:
+     Recorre TODAS las claves de localStorage vía
+     for (let i = 0; i < localStorage.length; i++) { const k =
+     localStorage.key(i); ... } — nunca Object.keys(localStorage),
+     para funcionar igual en Safari/iOS. Filtra por patrón de nombre
+     (linea, odds, total, over, under, mercado, ou, bookie,
+     moneyline), case-insensitive.
+     Para cada clave candidata, intenta JSON.parse y decide cómo
+     leerla según su forma real:
+       - Si es un objeto con la forma { fecha, tipo, capturado_en,
+         juegos: [...] } (la forma real de
+         lineas_mercado_pregame_v4): la lista de registros es
+         SIEMPRE parsed.juegos — nunca Object.values(parsed), que
+         trataría fecha/tipo/capturado_en como si fueran registros
+         de juego. Se reportan fecha, tipo y capturado_en tal cual
+         vienen, más cuántos juegos trae esa captura, y se inspecciona
+         cada juego en busca de commence_time, total, bookie, equipos
+         (home/away) y venue.
+       - Si es un array plano, se usa tal cual como lista de
+         registros (comportamiento genérico para otras claves que no
+         siguen este patrón).
+       - Cualquier otra forma de objeto se marca explícitamente como
+         "forma no reconocida" en vez de forzar una interpretación
+         genérica que pudiera dar un veredicto falso.
+     Con esa forma, esta clave normalmente representa la captura de
+     UN SOLO día (una sola fecha global en parsed.fecha), así que el
+     veredicto por defecto para esta forma es CAPTURA DIARIA, no
+     histórico acumulado — coincide con lo que ya se sabía de
+     jalar-linea.js. Al final se suman las fechas distintas de TODAS
+     las claves candidatas juntas: si en conjunto hay más de una
+     fecha, puede haber acumulación real entre corridas; si no, se
+     marca HISTORICO_OU_NO_ENCONTRADO.
+
+   QUÉ NO HACE ESTA HERRAMIENTA:
+     No guarda nada en localStorage. No modifica ninguna caché leída.
+     No enriquece las filas de Data Madre. No toca index.html,
+     mlbpro-core.js, F5, Coincidencia, trayectoria de viento ni
+     brújula. Es exclusivamente instrumento de medición.
+
+   ESTADO:
+     Corregida tras revisión de Perez: sin cifra fija de filas,
+     schedule por rango (una sola llamada) en vez de una llamada por
+     gamePk, hora medida para toda Data Madre y reportada también
+     por separado dentro del cruce F5, escaneo de localStorage vía
+     length/key(i), Fase 3 reconoce parsed.juegos correctamente, Fase
+     1 reporta duplicados y filas sin gamePk, y ERA/xERA quedan
+     etiquetados como PERFIL_ACTUAL_DEL_PITCHER en todo el reporte.
+     Ninguna fase se ha corrido todavía en el navegador — los números
+     reales quedan pendientes de que Perez la ejecute.
+
+   FECHA:
+     22 jul 2026.
+   ============================================================ */
+
+const DM_KEY = "MLBPRO_DATA_MADRE_HIST_2026_V1";
+const F5_KEY = "F5_HISTORICO_CARRERAJE_2026";
+const MLB_BASE = "https://statsapi.mlb.com/api/v1";
+
+function setEstado(t) { document.getElementById("estado").textContent = t; }
+function render(html) { document.getElementById("reporte").innerHTML = html; }
+function agregar(html) { document.getElementById("reporte").innerHTML += html; }
+
+function leerCacheJSON(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return { ok: false, motivo: "CLAVE_VACIA_O_INEXISTENTE", data: [] };
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return { ok: false, motivo: "NO_ES_ARRAY", data: [] };
+    return { ok: true, motivo: null, data: arr };
+  } catch (e) {
+    return { ok: false, motivo: "JSON_PARSE_ERROR: " + (e && e.message ? e.message : e), data: [] };
+  }
+}
+
+function fechaISOValidaSimple(iso) {
+  if (typeof iso !== "string") return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso);
+}
+
+/* ============================================================
+   FASE 1 — cruce Data Madre + F5_HISTORICO_CARRERAJE_2026 + Pitchers
+   ============================================================ */
+function fase1_cruceGamePk() {
+  try {
+    setEstado("Fase 1: leyendo cachés...");
+    render("");
+
+    const dm = leerCacheJSON(DM_KEY);
+    const f5 = leerCacheJSON(F5_KEY);
+
+    if (!dm.ok) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div>
+        <div class="meta">No se pudo leer ${DM_KEY}: ${dm.motivo}</div></div>`);
+      setEstado("Fase 1 detenida: Data Madre no disponible.");
+      return;
+    }
+    if (!f5.ok) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div>
+        <div class="meta">No se pudo leer ${F5_KEY}: ${f5.motivo}</div></div>`);
+      setEstado("Fase 1 detenida: F5 histórico no disponible.");
+      return;
+    }
+
+    const filasDM = dm.data;   // tamaño real, no fijo
+    const filasF5 = f5.data;   // tamaño real, no fijo
+
+    // --- filas sin gamePk ---
+    const dmSinGamePk = filasDM.filter(r => !r || r.gamePk == null || r.gamePk === "");
+    const f5SinGamePk = filasF5.filter(r => !r || r.gamePk == null || r.gamePk === "");
+
+    // --- conteo de ocurrencias por gamePk (para detectar duplicados) ---
+    function contarOcurrencias(filas) {
+      const conteo = new Map();
+      filas.forEach(r => {
+        if (!r || r.gamePk == null || r.gamePk === "") return;
+        const k = String(r.gamePk);
+        conteo.set(k, (conteo.get(k) || 0) + 1);
+      });
+      return conteo;
+    }
+
+    const conteoDM = contarOcurrencias(filasDM);
+    const conteoF5 = contarOcurrencias(filasF5);
+
+    const duplicadosDM = Array.from(conteoDM.entries()).filter(([, n]) => n > 1);
+    const duplicadosF5 = Array.from(conteoF5.entries()).filter(([, n]) => n > 1);
+
+    const filasEnDuplicadosDM = duplicadosDM.reduce((s, [, n]) => s + n, 0);
+    const filasEnDuplicadosF5 = duplicadosF5.reduce((s, [, n]) => s + n, 0);
+
+    // --- sets únicos de gamePk ---
+    const gamePksUnicosDM = new Set(conteoDM.keys());
+    const gamePksUnicosF5 = new Set(conteoF5.keys());
+
+    // --- cruces únicos reales: gamePk distintos presentes en ambas cachés ---
+    const crucesUnicos = Array.from(gamePksUnicosF5).filter(k => gamePksUnicosDM.has(k));
+
+    // --- filas F5 cuyo gamePk NO existe en Data Madre ---
+    const f5SinDM = Array.from(gamePksUnicosF5).filter(k => !gamePksUnicosDM.has(k));
+
+    // --- mapa F5 por gamePk (para resolver pitchers; si hay duplicados, se usa el último) ---
+    const mapaF5 = new Map();
+    filasF5.forEach(r => {
+      if (r && r.gamePk != null) mapaF5.set(String(r.gamePk), r);
+    });
+
+    const tienePitchersMaster = (typeof PITCHERS_MASTER_2026 !== "undefined");
+
+    let conAmbosAbridores = 0;
+    let conPerfilActualAmbos = 0;
+    const pitchersFaltantes = new Set();
+
+    const resultado = [];
+
+    crucesUnicos.forEach(gamePk => {
+      const registroF5 = mapaF5.get(gamePk);
+      const filaDM = filasDM.find(r => r && String(r.gamePk) === gamePk);
+
+      const homeId = registroF5.home_pitcher_id != null ? String(registroF5.home_pitcher_id) : null;
+      const awayId = registroF5.away_pitcher_id != null ? String(registroF5.away_pitcher_id) : null;
+
+      if (homeId != null && awayId != null) conAmbosAbridores++;
+
+      let homePerfil = null, awayPerfil = null;
+      if (tienePitchersMaster) {
+        if (homeId != null) {
+          homePerfil = PITCHERS_MASTER_2026[homeId] || null;
+          if (!homePerfil) pitchersFaltantes.add(homeId);
+        }
+        if (awayId != null) {
+          awayPerfil = PITCHERS_MASTER_2026[awayId] || null;
+          if (!awayPerfil) pitchersFaltantes.add(awayId);
+        }
+      }
+
+      if (homePerfil && awayPerfil) conPerfilActualAmbos++;
+
+      resultado.push({
+        gamePk: gamePk,
+        venue: filaDM ? filaDM.venue : null,
+        date: filaDM ? filaDM.date : null,
+        homeId: homeId,
+        awayId: awayId,
+        homePerfilActual: homePerfil,   // PERFIL_ACTUAL_DEL_PITCHER, no histórico
+        awayPerfilActual: awayPerfil
+      });
+    });
+
+    // Estado compartido en memoria (no localStorage) por si otra fase quiere reutilizarlo.
+    window.__CRUCE_F1__ = { resultado, gamePksUnicosF5, filasDM, filasF5 };
+
+    const html = `
+      <div class="bloque">
+        <div class="titulo">Fase 1 — Cruce Data Madre + F5 + Pitchers</div>
+        <div class="meta">Filas totales en Data Madre (leídas ahora, sin cifra fija): <b>${filasDM.length}</b></div>
+        <div class="meta">Filas totales en F5 histórico (leídas ahora): <b>${filasF5.length}</b></div>
+        <div class="meta ${dmSinGamePk.length === 0 ? 'ok' : 'bad'}">Filas de Data Madre SIN gamePk: <b>${dmSinGamePk.length}</b></div>
+        <div class="meta ${f5SinGamePk.length === 0 ? 'ok' : 'bad'}">Filas de F5 SIN gamePk: <b>${f5SinGamePk.length}</b></div>
+        <div class="meta ${duplicadosDM.length === 0 ? 'ok' : 'bad'}">gamePk duplicados dentro de Data Madre: <b>${duplicadosDM.length}</b> distinto(s), representando <b>${filasEnDuplicadosDM}</b> fila(s)</div>
+        <div class="meta ${duplicadosF5.length === 0 ? 'ok' : 'bad'}">gamePk duplicados dentro de F5: <b>${duplicadosF5.length}</b> distinto(s), representando <b>${filasEnDuplicadosF5}</b> fila(s)</div>
+        <div class="meta ok">Cruces únicos reales (gamePk distinto en ambas cachés): <b>${crucesUnicos.length}</b></div>
+        <div class="meta ${f5SinDM.length === 0 ? 'ok' : 'mid'}">Filas F5 cuyo gamePk NO existe en Data Madre: <b>${f5SinDM.length}</b></div>
+        <div class="meta">${tienePitchersMaster ? "" : '<span class="bad">PITCHERS_MASTER_2026 NO ESTÁ CARGADO — verificar script pitchers-master.js</span>'}</div>
+        <div class="meta ok">De los cruces únicos, con AMBOS abridores confirmados: <b>${conAmbosAbridores}</b></div>
+        <div class="meta ${conPerfilActualAmbos === conAmbosAbridores ? 'ok' : 'mid'}">Con nombre + PERFIL_ACTUAL_DEL_PITCHER (era/xera, snapshot actual — NO calidad histórica del día) de AMBOS: <b>${conPerfilActualAmbos}</b></div>
+        <div class="meta ${pitchersFaltantes.size === 0 ? 'ok' : 'bad'}">Pitcher IDs distintos faltantes en la tabla maestra: <b>${pitchersFaltantes.size}</b></div>
+        ${duplicadosDM.length ? `<details><summary>Ver gamePk duplicados en Data Madre (${duplicadosDM.length})</summary><div class="small">${duplicadosDM.map(([k, n]) => k + " (" + n + "x)").join(", ")}</div></details>` : ""}
+        ${duplicadosF5.length ? `<details><summary>Ver gamePk duplicados en F5 (${duplicadosF5.length})</summary><div class="small">${duplicadosF5.map(([k, n]) => k + " (" + n + "x)").join(", ")}</div></details>` : ""}
+        ${f5SinDM.length ? `<details><summary>Ver gamePk de F5 sin match en Data Madre (${f5SinDM.length})</summary><div class="small">${f5SinDM.join(", ")}</div></details>` : ""}
+        ${pitchersFaltantes.size ? `<details><summary>Ver pitcher IDs faltantes en tabla maestra (${pitchersFaltantes.size})</summary><div class="small">${Array.from(pitchersFaltantes).join(", ")}</div></details>` : ""}
+      </div>
+    `;
+    render(html);
+    setEstado("Fase 1 completa. Cruces únicos: " + crucesUnicos.length + ". Corre Fase 2 para resolver horas.");
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 1: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+
+/* ============================================================
+   FASE 2 — resolución de horas: UNA sola llamada por rango de fechas
+   ============================================================ */
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function fechaEnZonaLocal(date, tz) {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit"
+  });
+  return fmt.format(date);
+}
+
+function horaEnZonaLocal(date, tz) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour: "numeric", minute: "2-digit", hour12: false
+  });
+  const parts = fmt.formatToParts(date);
+  const h = parts.find(p => p.type === "hour");
+  const m = parts.find(p => p.type === "minute");
+  let hv = h ? parseInt(h.value, 10) : NaN;
+  if (hv === 24) hv = 0;
+  const mv = m ? m.value : "00";
+  return isNaN(hv) ? null : (pad2(hv) + ":" + mv);
+}
+
+// UNA sola llamada por rango de fechas. Construye Map gamePk -> {gameDate, venueNombre}.
+async function construirMapaScheduleRango(fechaMin, fechaMax) {
+  const url = MLB_ROUTES.WORKER_BASE + encodeURIComponent(
+    `${MLB_BASE}/schedule?sportId=1&startDate=${fechaMin}&endDate=${fechaMax}&hydrate=venue`
+  );
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("SCHEDULE RANGO HTTP " + r.status);
+  const j = await r.json();
+  const dates = Array.isArray(j.dates) ? j.dates : [];
+
+  const mapa = new Map();
+  dates.forEach(d => {
+    const games = Array.isArray(d.games) ? d.games : [];
+    games.forEach(g => {
+      if (g.gamePk == null) return;
+      mapa.set(String(g.gamePk), {
+        gameDate: g.gameDate || null,
+        venueNombre: (g.venue && g.venue.name) ? g.venue.name : null
+      });
+    });
+  });
+  return mapa;
+}
+
+async function fase2_resolverHoras() {
+  try {
+    setEstado("Fase 2: leyendo Data Madre y F5...");
+    render("");
+
+    const dm = leerCacheJSON(DM_KEY);
+    const f5 = leerCacheJSON(F5_KEY);
+
+    if (!dm.ok) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">No se pudo leer ${DM_KEY}: ${dm.motivo}</div></div>`);
+      setEstado("Fase 2 detenida.");
+      return;
+    }
+
+    const filasDM = dm.data;
+    const filasF5 = f5.ok ? f5.data : [];
+
+    // Set independiente de gamePk con cruce F5 (no depende de que la Fase 1 se haya corrido antes).
+    const gamePksConF5 = new Set(
+      filasF5.filter(r => r && r.gamePk != null && r.home_pitcher_id != null && r.away_pitcher_id != null)
+        .map(r => String(r.gamePk))
+    );
+
+    // --- fecha mínima y máxima REALES presentes en Data Madre ---
+    const fechasValidas = filasDM.map(r => r && r.date).filter(fechaISOValidaSimple);
+    if (!fechasValidas.length) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">Ninguna fila de Data Madre tiene un campo "date" válido. No se puede calcular el rango.</div></div>`);
+      setEstado("Fase 2 detenida: sin fechas válidas en Data Madre.");
+      return;
+    }
+    fechasValidas.sort();
+    const fechaMin = fechasValidas[0];
+    const fechaMax = fechasValidas[fechasValidas.length - 1];
+
+    setEstado(`Fase 2: una sola llamada a schedule (${fechaMin} → ${fechaMax})...`);
+
+    let mapaSchedule;
+    try {
+      mapaSchedule = await construirMapaScheduleRango(fechaMin, fechaMax);
+    } catch (e) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR DE RED</div><div class="meta">No se pudo traer el schedule por rango: ${e && e.message ? e.message : e}</div></div>`);
+      setEstado("Fase 2 detenida: error de red en la llamada por rango.");
+      return;
+    }
+
+    setEstado("Fase 2: resolviendo hora local para " + filasDM.length + " fila(s) de Data Madre...");
+
+    let horasConfirmadasTotal = 0;
+    let sinMatchSchedule = 0;
+    let sinTimezoneVenue = 0;
+    let gameDateInvalido = 0;
+
+    let horasConfirmadasEnF5 = 0;
+    let totalConF5 = 0;
+
+    const muestra = [];
+
+    filasDM.forEach(fila => {
+      if (!fila || fila.gamePk == null) return;
+      const gamePk = String(fila.gamePk);
+      const tieneF5 = gamePksConF5.has(gamePk);
+      if (tieneF5) totalConF5++;
+
+      const info = mapaSchedule.get(gamePk);
+      if (!info || !info.gameDate) {
+        sinMatchSchedule++;
+        if (muestra.length < 20) muestra.push({ gamePk, estado: "SIN_MATCH_SCHEDULE", venue: fila.venue });
+        return;
+      }
+
+      const dGame = new Date(info.gameDate);
+      if (isNaN(dGame.getTime())) {
+        gameDateInvalido++;
+        if (muestra.length < 20) muestra.push({ gamePk, estado: "GAMEDATE_INVALIDO", venue: fila.venue });
+        return;
+      }
+
+      const nombreParque = info.venueNombre || fila.venue;
+      const stadium = (typeof stadiumGet === "function") ? stadiumGet(nombreParque) : null;
+      const tz = stadium && stadium.timezone ? stadium.timezone : null;
+
+      if (!tz) {
+        sinTimezoneVenue++;
+        if (muestra.length < 20) muestra.push({ gamePk, estado: "SIN_TIMEZONE_VENUE", venue: nombreParque, gameDateUTC: info.gameDate });
+        return;
+      }
+
+      horasConfirmadasTotal++;
+      if (tieneF5) horasConfirmadasEnF5++;
+
+      if (muestra.length < 20) {
+        muestra.push({
+          gamePk, estado: "OK", venue: nombreParque,
+          gameDateUTC: info.gameDate,
+          timezoneUsado: tz,
+          fechaLocal: fechaEnZonaLocal(dGame, tz),
+          horaLocal: horaEnZonaLocal(dGame, tz)
+        });
+      }
+    });
+
+    const html = `
+      <div class="bloque">
+        <div class="titulo">Fase 2 — Resolución de horas (schedule por rango, 1 sola llamada)</div>
+        <div class="meta">Rango consultado: <b>${fechaMin} → ${fechaMax}</b> (una sola llamada a /schedule)</div>
+        <div class="meta">Filas totales en Data Madre procesadas: <b>${filasDM.length}</b></div>
+        <div class="meta ok">Horas confirmadas en TODA Data Madre: <b>${horasConfirmadasTotal}</b> (${filasDM.length ? ((horasConfirmadasTotal / filasDM.length) * 100).toFixed(1) : "0"}%)</div>
+        <div class="meta ok">Horas confirmadas DENTRO del subconjunto con cruce F5: <b>${horasConfirmadasEnF5}</b> de ${totalConF5} (${totalConF5 ? ((horasConfirmadasEnF5 / totalConF5) * 100).toFixed(1) : "0"}%)</div>
+        <div class="meta ${sinMatchSchedule === 0 ? 'ok' : 'mid'}">Sin match en el schedule del rango: <b>${sinMatchSchedule}</b></div>
+        <div class="meta ${sinTimezoneVenue === 0 ? 'ok' : 'mid'}">Sin timezone de venue resoluble: <b>${sinTimezoneVenue}</b></div>
+        <div class="meta ${gameDateInvalido === 0 ? 'ok' : 'mid'}">gameDate inválido: <b>${gameDateInvalido}</b></div>
+        <details open>
+          <summary>Ver muestra (primeras 20 filas procesadas)</summary>
+          <table class="tabla">
+            <tr><th>gamePk</th><th>venue</th><th>gameDate UTC</th><th>timezone</th><th>fecha local</th><th>hora local</th><th>estado</th></tr>
+            ${muestra.map(r => `
+              <tr>
+                <td>${r.gamePk}</td>
+                <td>${r.venue || "N/C"}</td>
+                <td>${r.gameDateUTC || "NO_CONFIRMADO"}</td>
+                <td>${r.timezoneUsado || "NO_CONFIRMADO"}</td>
+                <td>${r.fechaLocal || "NO_CONFIRMADO"}</td>
+                <td>${r.horaLocal || "NO_CONFIRMADO"}</td>
+                <td>${r.estado}</td>
+              </tr>
+            `).join("")}
+          </table>
+        </details>
+        <div class="small">Ningún faltante fue convertido a una hora inventada — todo lo no confirmado queda etiquetado explícitamente arriba (SIN_MATCH_SCHEDULE / SIN_TIMEZONE_VENUE / GAMEDATE_INVALIDO).</div>
+      </div>
+    `;
+    agregar(html);
+    setEstado("Fase 2 completa. Hora en toda Data Madre: " + horasConfirmadasTotal + "/" + filasDM.length + ". Dentro de F5: " + horasConfirmadasEnF5 + "/" + totalConF5 + ".");
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 2: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+
+/* ============================================================
+   FASE 3 — escaneo de claves de línea / odds en localStorage
+   ============================================================ */
+
+// Recorrido compatible con Safari/iOS: localStorage.length + localStorage.key(i),
+// NUNCA Object.keys(localStorage).
+function listarTodasLasClavesLocalStorage() {
+  const claves = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k != null) claves.push(k);
+  }
+  return claves;
+}
+
+function fase3_escanearClavesLinea() {
+  try {
+    setEstado("Fase 3: escaneando localStorage (length/key)...");
+
+    const patron = /linea|odds|total|over|under|mercado|\bou\b|bookie|moneyline/i;
+    const todasLasClaves = listarTodasLasClavesLocalStorage();
+    const candidatas = todasLasClaves.filter(k => patron.test(k));
+
+    if (!candidatas.length) {
+      agregar(`
+        <div class="bloque">
+          <div class="titulo">Fase 3 — Claves de línea / odds</div>
+          <div class="meta">Claves totales revisadas en localStorage: <b>${todasLasClaves.length}</b></div>
+          <div class="meta bad">Ninguna coincide con el patrón (linea, odds, total, over, under, mercado, ou, bookie, moneyline).</div>
+          <div class="meta bad">HISTORICO_OU_NO_ENCONTRADO</div>
+        </div>
+      `);
+      setEstado("Fase 3 completa. Ninguna clave de línea/odds encontrada.");
+      return;
+    }
+
+    let html = `<div class="bloque"><div class="titulo">Fase 3 — Claves de línea / odds encontradas</div>
+      <div class="meta">Claves totales revisadas en localStorage: <b>${todasLasClaves.length}</b></div>
+      <div class="meta">Claves candidatas por patrón: <b>${candidatas.length}</b></div>`;
+
+    const fechasGlobalesPorTodasLasClaves = new Set();
+
+    candidatas.forEach(function (key) {
+      let parsed = null, error = null;
+      try {
+        parsed = JSON.parse(localStorage.getItem(key));
+      } catch (e) {
+        error = "JSON_PARSE_ERROR: " + (e && e.message ? e.message : e);
+      }
+
+      html += `<details style="margin-top:10px;border-top:1px solid #222;padding-top:8px">
+        <summary>${key}</summary>`;
+
+      if (error) {
+        html += `<div class="meta bad">${error}</div></details>`;
+        return;
+      }
+
+      const esArray = Array.isArray(parsed);
+      const esObjetoConJuegos = !esArray && parsed && typeof parsed === "object" && Array.isArray(parsed.juegos);
+
+      if (esObjetoConJuegos) {
+        // Forma real conocida de lineas_mercado_pregame_v4:
+        // { fecha, tipo, capturado_en, juegos: [...] }
+        // La lista real de registros es SIEMPRE parsed.juegos, nunca
+        // Object.values(parsed) (eso trataría fecha/tipo/capturado_en
+        // como si fueran registros de juego).
+        const juegos = parsed.juegos;
+        const fechaGlobal = parsed.fecha != null ? String(parsed.fecha) : null;
+        const tipo = parsed.tipo != null ? String(parsed.tipo) : "N/C";
+        const capturadoEn = parsed.capturado_en != null ? String(parsed.capturado_en) : "N/C";
+
+        if (fechaGlobal) fechasGlobalesPorTodasLasClaves.add(fechaGlobal.slice(0, 10));
+
+        let conCommenceTime = 0, conTotal = 0, conBookie = 0, conEquipos = 0, conVenue = 0;
+        juegos.forEach(j => {
+          if (!j || typeof j !== "object") return;
+          if (j.commence_time != null && j.commence_time !== "") conCommenceTime++;
+          if (j.total != null && j.total !== "") conTotal++;
+          if (j.bookie != null && j.bookie !== "") conBookie++;
+          const tieneEquipos = (j.home_team != null || j.away_team != null || j.home != null || j.away != null || j.equipos != null);
+          if (tieneEquipos) conEquipos++;
+          if (j.venue != null && j.venue !== "") conVenue++;
+        });
+
+        html += `
+          <div class="meta"><b>Forma reconocida:</b> objeto { fecha, tipo, capturado_en, juegos[] } — forma real de captura pregame.</div>
+          <div class="meta">fecha (global de esta captura): <b>${fechaGlobal || "N/C"}</b></div>
+          <div class="meta">tipo: <b>${tipo}</b></div>
+          <div class="meta">capturado_en: <b>${capturadoEn}</b></div>
+          <div class="meta">Cantidad de juegos en parsed.juegos: <b>${juegos.length}</b></div>
+          <div class="meta">Cobertura de campos dentro de juegos[]: commence_time ${conCommenceTime}/${juegos.length} · total ${conTotal}/${juegos.length} · bookie ${conBookie}/${juegos.length} · equipos ${conEquipos}/${juegos.length} · venue ${conVenue}/${juegos.length}</div>
+          <div class="meta mid"><b>Veredicto: CAPTURA DIARIA</b> — esta clave trae una sola fecha global (parsed.fecha), consistente con una captura pregame de un día, no con un histórico acumulado de temporada.</div>
+          <div class="small">Nota: esta lectura solo puede ver lo que hay guardado en este momento. Si esta clave se sobrescribe cada día (mismo nombre, sin sufijo de fecha), no hay forma de recuperar desde aquí capturas de días anteriores ya perdidas.</div>
+        </details>`;
+        return;
+      }
+
+      // Camino genérico (array plano) para otras claves que puedan matchear
+      // el patrón sin seguir la forma conocida de {fecha,tipo,capturado_en,juegos}.
+      if (esArray) {
+        const lista = parsed;
+        const cantidadRegistros = lista.length;
+        const camposFecha = ["date", "commence_time", "capturado_en", "fecha", "captured_at"];
+        const fechasEncontradas = new Set();
+        let campoFechaUsado = null;
+
+        for (const registro of lista) {
+          if (!registro || typeof registro !== "object") continue;
+          for (const campo of camposFecha) {
+            if (registro[campo] != null && registro[campo] !== "") {
+              campoFechaUsado = campoFechaUsado || campo;
+              fechasEncontradas.add(String(registro[campo]).slice(0, 10));
+            }
+          }
+        }
+
+        fechasEncontradas.forEach(f => fechasGlobalesPorTodasLasClaves.add(f));
+
+        const primerRegistro = lista[0] || null;
+        const camposEjemplo = primerRegistro && typeof primerRegistro === "object"
+          ? Object.keys(primerRegistro).join(", ")
+          : "N/C";
+
+        const cantidadFechasDistintas = fechasEncontradas.size;
+        let veredicto;
+        if (cantidadFechasDistintas === 0) {
+          veredicto = "HISTORICO_OU_NO_ENCONTRADO (sin campo de fecha reconocible)";
+        } else if (cantidadFechasDistintas <= 1) {
+          veredicto = "CAPTURA DIARIA (una sola fecha distinta)";
+        } else {
+          veredicto = "POSIBLE ACUMULADA (" + cantidadFechasDistintas + " fechas distintas)";
+        }
+
+        html += `
+          <div class="meta"><b>Forma:</b> Array plano</div>
+          <div class="meta">Cantidad de registros: <b>${cantidadRegistros}</b></div>
+          <div class="meta">Campo de fecha usado: <b>${campoFechaUsado || "ninguno encontrado"}</b></div>
+          <div class="meta">Fechas distintas encontradas: <b>${cantidadFechasDistintas}</b></div>
+          <div class="meta ${cantidadFechasDistintas > 1 ? 'ok' : 'bad'}">Veredicto: <b>${veredicto}</b></div>
+          <div class="small">Campos de ejemplo del primer registro: ${camposEjemplo}</div>
+        </details>`;
+        return;
+      }
+
+      // Ni array, ni {fecha,tipo,capturado_en,juegos[]}: forma no reconocida.
+      // No se interpreta genéricamente para evitar un veredicto falso.
+      html += `<div class="meta mid">Forma de objeto NO reconocida (no es array, no tiene .juegos[]) — no se interpreta genéricamente para evitar un veredicto falso. Revisar manualmente.</div></details>`;
+    });
+
+    const totalFechasGlobales = fechasGlobalesPorTodasLasClaves.size;
+    html += `
+      <div class="meta" style="margin-top:10px;border-top:1px solid #222;padding-top:8px">
+        <b>Resumen combinado de TODAS las claves candidatas:</b> ${totalFechasGlobales} fecha(s) distinta(s) encontradas en total.
+      </div>
+      <div class="meta ${totalFechasGlobales > 1 ? 'ok' : 'bad'}">
+        ${totalFechasGlobales > 1
+          ? "Hay más de una fecha distinta entre las claves candidatas — posible acumulación real entre corridas, revisar cuáles claves la aportan."
+          : "HISTORICO_OU_NO_ENCONTRADO — con la evidencia real disponible, no hay indicio de línea histórica acumulada de temporada; lo que existe es, como mucho, una captura del día."}
+      </div>
+    </div>`;
+    agregar(html);
+    setEstado("Fase 3 completa. " + candidatas.length + " clave(s) revisada(s) de " + todasLasClaves.length + " totales.");
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 3: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
