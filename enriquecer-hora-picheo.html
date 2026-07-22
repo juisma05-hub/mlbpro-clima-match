@@ -106,18 +106,24 @@ pre{background:#050505;border:1px solid #222;border-radius:8px;padding:8px;overf
 
      B) ABRIDOR — doble confirmación oficial exacta, SIN <select>, SIN
      campos de ID manuales, SIN posibilidad de escribir un ID:
-       Para cada uno de los 9, se leen:
-         boxscore.teams.away.pitchers[0] (primer ID del arreglo
-         oficial de MLB), boxscore.teams.home.pitchers[0], y el
-         primer pitcher de cada lado según el play-by-play real de
-         /game/{gamePk}/feed/live (pitcher del primer play con
-         isTopInning===false para AWAY, isTopInning===true para
-         HOME — así es como MLB estructura las entradas: en el top
-         batea el visitante, así que el pitcher de esa mitad es el de
-         HOME).
+       Para cada uno de los 9, se obtiene el abridor real de cada lado
+       de DOS fuentes independientes:
+         1. Del boxscore, con la función ya existente y aprobada
+            resolverAbridorReal(team.players) — el mismo criterio
+            gamesStarted===1 con candidato único que usa la Fase 1
+            principal y f5-historico-carreraje.js. Ya NO se usa
+            boxscore.teams.X.pitchers[0] (ese arreglo no garantiza
+            que el primer ID sea el abridor real).
+         2. Del play-by-play oficial,
+            https://statsapi.mlb.com/api/v1/game/{gamePk}/playByPlay
+            (vía MLB_ROUTES.WORKER_BASE): el pitcher del primer play
+            con isTopInning===false es el abridor de AWAY; el del
+            primer play con isTopInning===true es el abridor de HOME
+            (estructura real de entradas de MLB).
        Se acepta el abridor de un lado SOLO si:
-         - existe boxscore.teams.X.pitchers[0];
-         - existe el primer pitcher del feed para ese lado;
+         - resolverAbridorReal(team.players) confirma un candidato
+           único para ese lado;
+         - el play-by-play trae un primer pitcher para ese lado;
          - ambos IDs son EXACTAMENTE el mismo;
          - ese ID existe realmente en boxscore.teams.X.players.
        Si las CUATRO condiciones se cumplen para AMBOS lados, se
@@ -129,9 +135,10 @@ pre{background:#050505;border:1px solid #222;border-radius:8px;padding:8px;overf
        estadoEnriquecimientoPicheo = "ABRIDOR_NO_RESUELTO" — esto
        BLOQUEA la Fase 2, sin ningún mecanismo de selección o
        escritura manual de ID. fuenteResolucion se muestra como
-       "boxscore team.pitchers[0] + feed/live primer pitcher" y
-       motivoResolucion como "IDs coinciden por lado" — ambos son
-       texto autogenerado de documentación, no botones ni inputs.
+       "resolverAbridorReal(team.players) + playByPlay primer
+       pitcher" y motivoResolucion como "IDs coinciden por lado y
+       existen en team.players" — ambos son texto autogenerado de
+       documentación, no botones ni inputs.
 
    CONFLICTO DE PARQUE (vigente): venue oficial y venue guardado se
    comparan CANONIZADOS (stadiumNorm(stadiumCanonName(...))), nunca
@@ -294,6 +301,10 @@ async function fetchFeedLive(gamePk) {
   const url = MLB_ROUTES.WORKER_BASE + encodeURIComponent(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`);
   return await fetchJSONConReintento(url, REINTENTOS_BOXSCORE);
 }
+async function fetchPlayByPlay(gamePk) {
+  const url = MLB_ROUTES.WORKER_BASE + encodeURIComponent(`https://statsapi.mlb.com/api/v1/game/${gamePk}/playByPlay`);
+  return await fetchJSONConReintento(url, REINTENTOS_BOXSCORE);
+}
 
 // Pitcher del primer play top (home pitching, away bateando) = abridor HOME.
 // Pitcher del primer play NO top (away pitching, home bateando) = abridor AWAY.
@@ -301,6 +312,26 @@ function primerPitcherDesdeFeed(feed, ladoHome) {
   try {
     const plays = feed && feed.liveData && feed.liveData.plays && Array.isArray(feed.liveData.plays.allPlays)
       ? feed.liveData.plays.allPlays : [];
+    for (const p of plays) {
+      const esTop = p.about && p.about.isTopInning;
+      if (ladoHome === true && esTop === true) {
+        const pit = p.matchup && p.matchup.pitcher;
+        if (pit && pit.id != null) return { id: pit.id, nombre: pit.fullName || null };
+      }
+      if (ladoHome === false && esTop === false) {
+        const pit = p.matchup && p.matchup.pitcher;
+        if (pit && pit.id != null) return { id: pit.id, nombre: pit.fullName || null };
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+// /game/{gamePk}/playByPlay devuelve { allPlays: [...] } directamente
+// (sin el anidado liveData.plays.allPlays que usa feed/live).
+function primerPitcherDesdePlayByPlay(pbp, ladoHome) {
+  try {
+    const plays = pbp && Array.isArray(pbp.allPlays) ? pbp.allPlays : [];
     for (const p of plays) {
       const esTop = p.about && p.about.isTopInning;
       if (ladoHome === true && esTop === true) {
@@ -725,7 +756,8 @@ function aplicarResultadoFecha(gamePk, ok) {
   entry.camposNuevos.estadoEnriquecimientoHora = ok ? "OK_RESOLUCION_FECHA_DOCUMENTADA" : "CONFLICTO_FECHA_CLIMA";
 }
 
-// B) Doble confirmación exacta boxscore.pitchers[0] === feed/live primer pitcher.
+// B) Doble confirmación exacta: resolverAbridorReal(team.players) === playByPlay primer pitcher.
+// primerIdArregloPitchers() queda sin uso — ya no se confía en boxscore.teams.X.pitchers[0].
 function primerIdArregloPitchers(teamData) {
   if (!teamData || !Array.isArray(teamData.pitchers) || !teamData.pitchers.length) return null;
   return teamData.pitchers[0];
@@ -829,48 +861,46 @@ async function fase1b_investigarAnomalias() {
     agregar1b(htmlFecha);
 
     // --- B) 9 abridores no confirmados ---
-    setEstado("Fase 1B: confirmando abridores por doble fuente (boxscore + feed/live) para 9 juegos...");
+    setEstado("Fase 1B: confirmando abridores por doble fuente (boxscore + playByPlay) para 9 juegos...");
     let resueltosAbridor = 0, bloqueadosAbridor = 0;
     agregar1b(`<div class="bloque"><div class="titulo">Fase 1B — Abridores (${GAMEPKS_SIN_ABRIDOR.length} juegos, doble confirmación exacta)</div></div>`);
 
     for (const gamePk of GAMEPKS_SIN_ABRIDOR) {
-      setEstado("Fase 1B: gamePk " + gamePk + " — boxscore + feed/live...");
+      setEstado("Fase 1B: gamePk " + gamePk + " — boxscore + playByPlay...");
       const fila = porGamePk.get(gamePk);
-      let box = null, feed = null;
+      let box = null, playByPlay = null;
       let errores = [];
       try { box = await fetchBoxscore(gamePk); } catch (e) { errores.push("boxscore: " + (e.message || e)); }
-      try { feed = await fetchFeedLive(gamePk); } catch (e) { errores.push("feed/live: " + (e.message || e)); }
+      try { playByPlay = await fetchPlayByPlay(gamePk); } catch (e) { errores.push("playByPlay: " + (e.message || e)); }
 
       const homeTeam = box && box.teams && box.teams.home ? box.teams.home : null;
       const awayTeam = box && box.teams && box.teams.away ? box.teams.away : null;
 
-      const awayArrId = primerIdArregloPitchers(awayTeam);
-      const homeArrId = primerIdArregloPitchers(homeTeam);
-      const feedAway = feed ? primerPitcherDesdeFeed(feed, false) : null;
-      const feedHome = feed ? primerPitcherDesdeFeed(feed, true) : null;
+      const boxAway = awayTeam ? resolverAbridorReal(awayTeam.players) : null;
+      const boxHome = homeTeam ? resolverAbridorReal(homeTeam.players) : null;
+      const pbpAway = playByPlay ? primerPitcherDesdePlayByPlay(playByPlay, false) : null;
+      const pbpHome = playByPlay ? primerPitcherDesdePlayByPlay(playByPlay, true) : null;
 
       let motivoTecnico = null;
       if (errores.length) motivoTecnico = errores.join(" · ");
-      else if (awayArrId == null) motivoTecnico = "falta boxscore.teams.away.pitchers[0]";
-      else if (homeArrId == null) motivoTecnico = "falta boxscore.teams.home.pitchers[0]";
-      else if (!feedAway) motivoTecnico = "falta primer pitcher AWAY en feed/live";
-      else if (!feedHome) motivoTecnico = "falta primer pitcher HOME en feed/live";
-      else if (String(awayArrId) !== String(feedAway.id)) motivoTecnico = "away: pitchers[0]=" + awayArrId + " vs feed=" + feedAway.id + " (no coinciden)";
-      else if (String(homeArrId) !== String(feedHome.id)) motivoTecnico = "home: pitchers[0]=" + homeArrId + " vs feed=" + feedHome.id + " (no coinciden)";
-      else if (!jugadorPorId(awayTeam, awayArrId)) motivoTecnico = "away ID " + awayArrId + " no existe en team.players";
-      else if (!jugadorPorId(homeTeam, homeArrId)) motivoTecnico = "home ID " + homeArrId + " no existe en team.players";
+      else if (!boxAway) motivoTecnico = "boxscore sin abridor real confirmado para AWAY (gamesStarted!==1 o candidatos ambiguos)";
+      else if (!boxHome) motivoTecnico = "boxscore sin abridor real confirmado para HOME (gamesStarted!==1 o candidatos ambiguos)";
+      else if (!pbpAway) motivoTecnico = "falta primer pitcher AWAY en playByPlay";
+      else if (!pbpHome) motivoTecnico = "falta primer pitcher HOME en playByPlay";
+      else if (String(boxAway.id) !== String(pbpAway.id)) motivoTecnico = "away: boxscore=" + boxAway.id + " vs playByPlay=" + pbpAway.id + " (no coinciden)";
+      else if (String(boxHome.id) !== String(pbpHome.id)) motivoTecnico = "home: boxscore=" + boxHome.id + " vs playByPlay=" + pbpHome.id + " (no coinciden)";
+      else if (!jugadorPorId(awayTeam, boxAway.id)) motivoTecnico = "away ID " + boxAway.id + " no existe en team.players";
+      else if (!jugadorPorId(homeTeam, boxHome.id)) motivoTecnico = "home ID " + boxHome.id + " no existe en team.players";
 
       let resultado;
       if (motivoTecnico) {
         resultado = { ok: false };
         bloqueadosAbridor++;
       } else {
-        const jugadorAway = jugadorPorId(awayTeam, awayArrId);
-        const jugadorHome = jugadorPorId(homeTeam, homeArrId);
         resultado = {
           ok: true,
-          pitcherAwayId: Number(awayArrId), pitcherAwayNombre: jugadorAway && jugadorAway.person ? jugadorAway.person.fullName : null,
-          pitcherHomeId: Number(homeArrId), pitcherHomeNombre: jugadorHome && jugadorHome.person ? jugadorHome.person.fullName : null
+          pitcherAwayId: Number(boxAway.id), pitcherAwayNombre: boxAway.nombre,
+          pitcherHomeId: Number(boxHome.id), pitcherHomeNombre: boxHome.nombre
         };
         resueltosAbridor++;
       }
@@ -879,13 +909,13 @@ async function fase1b_investigarAnomalias() {
       agregar1b(`
         <div class="bloque" style="background:#111">
           <div class="titulo">gamePk ${gamePk} ${fila ? "(" + fila.date + ", " + fila.away + " @ " + fila.home + ")" : ""} — ${resultado.ok ? '<span class="ok">OK_DOBLE_CONFIRMACION_OFICIAL</span>' : '<span class="bad">ABRIDOR_NO_RESUELTO</span>'}</div>
-          <div class="meta">boxscore.teams.away.pitchers[0]: <b>${awayArrId != null ? awayArrId : "N/C"}</b> · feed/live primer AWAY: <b>${feedAway ? feedAway.id : "N/C"}</b></div>
-          <div class="meta">boxscore.teams.home.pitchers[0]: <b>${homeArrId != null ? homeArrId : "N/C"}</b> · feed/live primer HOME: <b>${feedHome ? feedHome.id : "N/C"}</b></div>
+          <div class="meta">boxscore (resolverAbridorReal) AWAY: <b>${boxAway ? boxAway.id + " — " + (boxAway.nombre || "N/C") : "N/C"}</b> · playByPlay primer AWAY: <b>${pbpAway ? pbpAway.id : "N/C"}</b></div>
+          <div class="meta">boxscore (resolverAbridorReal) HOME: <b>${boxHome ? boxHome.id + " — " + (boxHome.nombre || "N/C") : "N/C"}</b> · playByPlay primer HOME: <b>${pbpHome ? pbpHome.id : "N/C"}</b></div>
           ${resultado.ok ? `
             <div class="meta ok">pitcherAwayId: ${resultado.pitcherAwayId} — ${resultado.pitcherAwayNombre || "N/C"} (nombre tomado automáticamente de boxscore.teams.away.players)</div>
             <div class="meta ok">pitcherHomeId: ${resultado.pitcherHomeId} — ${resultado.pitcherHomeNombre || "N/C"} (nombre tomado automáticamente de boxscore.teams.home.players)</div>
-            <div class="meta ok">fuente (autogenerada): boxscore team.pitchers[0] + feed/live primer pitcher.</div>
-            <div class="meta ok">motivo (autogenerado): IDs coinciden por lado.</div>
+            <div class="meta ok">fuente (autogenerada): resolverAbridorReal(team.players) + playByPlay primer pitcher.</div>
+            <div class="meta ok">motivo (autogenerado): IDs coinciden por lado y existen en team.players.</div>
           ` : `
             <div class="meta bad">No se resolvió: ${motivoTecnico}</div>
             <div class="small">Sin selección manual, sin campo de ID editable. Bloquea la Fase 2 hasta que ambas fuentes oficiales coincidan.</div>
