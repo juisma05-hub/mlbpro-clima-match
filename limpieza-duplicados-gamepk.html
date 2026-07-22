@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MLBPro · Limpieza de gamePk duplicados</title>
+<style>
+body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:18px;color:#f5c518;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin-bottom:14px}
+button{width:100%;padding:14px;margin:6px 0;font-size:14px;font-weight:800;color:#000;background:#f5c518;border:none;border-radius:12px}
+button:disabled{opacity:.4}
+button.warn{background:#da3633;color:#fff}
+#estado{margin:12px 0;font-size:13px;color:#9ad}
+.bloque{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+.titulo{font-size:15px;font-weight:800;color:#fff;margin-bottom:8px}
+.meta{font-size:13px;color:#ddd;margin:4px 0}
+.ok{color:#32d74b;font-weight:800}
+.mid{color:#ffd60a;font-weight:800}
+.bad{color:#ff453a;font-weight:800}
+.small{font-size:12px;color:#aaa;margin-top:5px}
+.tabla{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.tabla th,.tabla td{border:1px solid #222;padding:5px;text-align:left;color:#ccc;vertical-align:top}
+.tabla th{background:#151515;color:#f5c518}
+</style>
+</head>
+<body>
+<h1>MLBPro · Limpieza de gamePk duplicados</h1>
+<div class="sub">Fase 1: auditoría contra MLB StatsAPI (solo lectura) · Fase 2: borrado exacto, con verificación de firma completa, solo si Fase 1 no dejó conflictos</div>
+
+<button onclick="fase1_auditarContraMLB()">1) AUDITAR DUPLICADOS CONTRA MLB StatsAPI</button>
+<button class="warn" id="btnLimpieza" onclick="fase2_ejecutarLimpieza()" disabled>2) EJECUTAR LIMPIEZA (borra solo filas verificadas)</button>
+
+<div id="estado">Listo.</div>
+<div id="reporte"></div>
+
+<script src="estadios.js"></script>
+<script src="mlbpro-core.js"></script>
+<script src="mlb-routes.js"></script>
+
+<script>
+/* ============================================================
+   PRÓLOGO — limpieza-duplicados-gamepk.html
+   ============================================================
+   QUÉ ES:
+     Archivo ÚNICO y FINAL, en dos fases, para resolver los gamePk
+     duplicados ya confirmados en MLBPRO_DATA_MADRE_HIST_2026_V1
+     (auditar-duplicados-gamepk.html ya demostró que existen y que
+     tienen fecha y clima distintos entre copias — contaminan
+     Coincidencia, promedios y cualquier cruce posterior). No hay
+     versiones intermedias de este archivo: esta es la versión que
+     se sube y se corre.
+
+   NO SE FIJA NINGUNA CIFRA COMO DEPENDENCIA LÓGICA:
+     Ni "13 duplicados" ni "1,538 filas" ni "1,525 filas resultantes"
+     están escritos en la lógica de este archivo. Cada fase LEE el
+     caché real al momento de ejecutar. El resultado final esperado
+     por Perez (1,525 filas / 1,525 gamePk únicos / 0 duplicados) se
+     muestra como referencia informativa al cerrar la Fase 2, pero la
+     limpieza NUNCA fuerza esos números: si el resultado real no los
+     iguala, se declara error y la limpieza NO se marca como cerrada.
+
+   FASE 1 — auditoría contra MLB StatsAPI (SOLO LECTURA):
+     1. Lee el histórico real vía CORE.leerHistoricoCache().
+     2. Encuentra TODOS los gamePk que aparezcan más de una vez en
+        esa lectura (no asume una cantidad fija).
+     3. Para el rango de fechas cubierto por esas filas duplicadas,
+        hace UNA sola llamada a
+        ${MLB_BASE}/schedule?sportId=1&startDate=<min>&endDate=<max>&hydrate=venue
+        (nunca una llamada por gamePk) y construye un Map
+        gamePk -> { gameDate oficial UTC, nombre de venue oficial }.
+     4. Para cada gamePk duplicado, resuelve el timezone real del
+        parque con stadiumGet() y calcula la FECHA LOCAL CORRECTA del
+        juego a partir del gameDate oficial de MLB.
+     5. Compara esa fecha local correcta contra el campo `date` de
+        CADA copia guardada de ese gamePk:
+          - Si EXACTAMENTE UNA copia coincide: esa se CONSERVA: las
+            demás quedan marcadas para ELIMINAR, con motivo explícito
+            y con la FIRMA COMPLETA de cada fila (JSON.stringify de
+            la fila entera) guardada junto con su índice y gamePk,
+            para poder verificarla byte a byte en la Fase 2.
+          - Si CERO copias coinciden, MÁS DE UNA coincide (empate), el
+            fetch de MLB falla para ese rango, el gameDate no es
+            válido, o el timezone del venue no resuelve: el gamePk
+            queda CONFLICTO_NO_RESUELTO. Nunca se elige "la primera
+            copia" por defecto, nunca se borra por una simple
+            diferencia de fecha sin haber podido validarla contra
+            MLB. Un solo CONFLICTO_NO_RESUELTO bloquea la Fase 2
+            COMPLETA — la limpieza es todo o nada, nunca parcial.
+     Se muestra una tabla por gamePk con: fechas e índices de todas
+     las copias, gameDate oficial, timezone, fecha local correcta,
+     índice a conservar, índice(s) a eliminar, y motivo — o el motivo
+     por el que no se pudo decidir.
+
+   FASE 2 — limpieza controlada (ESCRIBE localStorage, con
+   verificación de firma completa antes de borrar):
+     Solo se habilita si la Fase 1 terminó SIN ningún
+     CONFLICTO_NO_RESUELTO.
+     Antes de borrar, vuelve a leer CORE.leerHistoricoCache() (nunca
+     reutiliza la copia en memoria de la Fase 1) y, para CADA fila
+     involucrada (tanto las que se conservan como las que se van a
+     eliminar), verifica CUATRO cosas contra lo capturado en la
+     Fase 1:
+       1. el índice sigue existiendo dentro del array actual;
+       2. el gamePk en ese índice es el mismo;
+       3. el date en ese índice es el mismo;
+       4. la FIRMA COMPLETA de la fila (JSON.stringify de la fila
+          entera, todos los campos) es idéntica byte a byte a la
+          capturada durante la Fase 1.
+     No basta con comparar la CANTIDAD de filas del caché: si el
+     array cambió de orden, si el contenido de una fila cambió sin
+     cambiar su longitud total, o si cualquier firma no coincide, la
+     limpieza se DETIENE por completo, no borra nada, y exige repetir
+     la Fase 1 desde cero — nunca actúa sobre índices que ya no están
+     garantizados.
+     Si todas las verificaciones pasan, pide una confirmación
+     explícita (confirm()) indicando cuántas filas EXACTAS se van a
+     borrar, y solo entonces elimina esas filas y llama a
+     CORE.guardarHistoricoCache() — la única función pública de
+     escritura que expone mlbpro-core.js (CONGELADO: no se modificó
+     ni una línea suya).
+     SOBRE "CONFIRMAR QUE EL GUARDADO TUVO ÉXITO": se revisó el código
+     real de guardarHistoricoCache() en mlbpro-core.js y esa función
+     NO devuelve ningún valor (es un try/catch mudo sobre
+     localStorage.setItem). No existe un valor de retorno real que
+     esta herramienta pueda leer para "confirmar éxito" desde la
+     propia llamada — inventar esa confirmación sería falso. La única
+     verificación honesta disponible es la que este archivo sí hace:
+     releer el caché con CORE.leerHistoricoCache() inmediatamente
+     después de guardar y comprobar, con los datos reales que
+     localStorage devuelve, que el resultado es el esperado.
+     Tras releer, se confirma el resultado real: filas totales,
+     gamePk únicos, y duplicados restantes. Se compara ese resultado
+     real contra el esperado matemáticamente (filas antes menos filas
+     eliminadas) y también contra el número que Perez espera (1,525 /
+     1,525 / 0), solo como referencia. Si el resultado real no
+     coincide con lo esperado matemáticamente, se muestra un error
+     explícito y la limpieza NO se declara cerrada.
+
+   QUÉ NO HACE ESTA HERRAMIENTA:
+     No elige la primera copia por defecto. No borra por diferencia
+     de fecha sin validar contra MLB. No hace limpieza parcial (todo
+     o nada). No actúa sobre índices sin verificar su firma completa
+     primero. No enriquece hora ni picheo — eso sigue explícitamente
+     bloqueado hasta cerrar esta limpieza. No toca index.html,
+     mlbpro-core.js, F5, Coincidencia, trayectoria de viento, brújula
+     ni ningún otro módulo. No inventa datos ni fuerza los números
+     esperados: si algo no cuadra, lo dice y se detiene.
+
+   ESTADO:
+     Recién creada, versión única y final. Ninguna fase se ha corrido
+     todavía — los duplicados reales, su resolución contra MLB, y el
+     resultado final de filas/gamePk únicos/duplicados tras limpiar
+     quedan pendientes de que Perez la ejecute una sola vez.
+
+   FECHA:
+     22 jul 2026.
+   ============================================================ */
+
+const MLB_BASE = "https://statsapi.mlb.com/api/v1";
+
+function setEstado(t) { document.getElementById("estado").textContent = t; }
+function render(html) { document.getElementById("reporte").innerHTML = html; }
+function agregar(html) { document.getElementById("reporte").innerHTML += html; }
+
+function fechaISOValidaSimple(iso) {
+  return typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso);
+}
+
+function fechaEnZonaLocal(date, tz) {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit"
+  });
+  return fmt.format(date);
+}
+
+// UNA sola llamada por rango de fechas (nunca una llamada por gamePk).
+async function construirMapaScheduleRango(fechaMin, fechaMax) {
+  const url = MLB_ROUTES.WORKER_BASE + encodeURIComponent(
+    `${MLB_BASE}/schedule?sportId=1&startDate=${fechaMin}&endDate=${fechaMax}&hydrate=venue`
+  );
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("SCHEDULE RANGO HTTP " + r.status);
+  const j = await r.json();
+  const dates = Array.isArray(j.dates) ? j.dates : [];
+
+  const mapa = new Map();
+  dates.forEach(d => {
+    const games = Array.isArray(d.games) ? d.games : [];
+    games.forEach(g => {
+      if (g.gamePk == null) return;
+      mapa.set(String(g.gamePk), {
+        gameDate: g.gameDate || null,
+        venueNombre: (g.venue && g.venue.name) ? g.venue.name : null
+      });
+    });
+  });
+  return mapa;
+}
+
+// Estado compartido entre Fase 1 y Fase 2, solo en memoria (nunca localStorage).
+let ULTIMA_AUDITORIA = null;
+// { filasTotalesAlAuditar, decisiones: [...], indicesAEliminar: Set,
+//   conflictos: [...], firmasPorIndice: Map(indice -> {gamePk, date, firma}) }
+
+/* ============================================================
+   FASE 1 — auditoría contra MLB StatsAPI (solo lectura)
+   ============================================================ */
+async function fase1_auditarContraMLB() {
+  try {
+    document.getElementById("btnLimpieza").disabled = true;
+    ULTIMA_AUDITORIA = null;
+
+    setEstado("Fase 1: leyendo histórico via CORE.leerHistoricoCache()...");
+    render("");
+
+    if (typeof window.MLBPRO_CORE === "undefined" || typeof window.MLBPRO_CORE.leerHistoricoCache !== "function") {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div>
+        <div class="meta">window.MLBPRO_CORE.leerHistoricoCache no está disponible. Verificar que mlbpro-core.js y estadios.js estén cargando.</div></div>`);
+      setEstado("Fase 1 detenida: CORE no disponible.");
+      return;
+    }
+    if (typeof MLB_ROUTES === "undefined" || !MLB_ROUTES.WORKER_BASE) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div>
+        <div class="meta">MLB_ROUTES no está disponible. Verificar que mlb-routes.js esté cargando junto a este archivo (misma carpeta, mismo nombre exacto).</div></div>`);
+      setEstado("Fase 1 detenida: MLB_ROUTES no disponible.");
+      return;
+    }
+
+    const CORE = window.MLBPRO_CORE;
+    const filas = CORE.leerHistoricoCache();
+
+    if (!Array.isArray(filas)) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">CORE.leerHistoricoCache() no devolvió un array.</div></div>`);
+      setEstado("Fase 1 detenida: caché no es un array.");
+      return;
+    }
+
+    const filasTotales = filas.length;
+
+    // --- índice: gamePk -> lista de { indice, fila } ---
+    const porGamePk = new Map();
+    filas.forEach((fila, indice) => {
+      if (!fila || fila.gamePk == null) return;
+      const k = String(fila.gamePk);
+      if (!porGamePk.has(k)) porGamePk.set(k, []);
+      porGamePk.get(k).push({ indice, fila });
+    });
+
+    const duplicados = Array.from(porGamePk.entries()).filter(([, arr]) => arr.length > 1);
+
+    if (!duplicados.length) {
+      render(`<div class="bloque"><div class="meta ok">No se encontró ningún gamePk duplicado en esta lectura del caché. Nada que limpiar.</div></div>`);
+      setEstado("Fase 1 completa. Sin duplicados.");
+      return;
+    }
+
+    // --- rango de fechas cubierto por las filas duplicadas ---
+    const fechasDeDuplicados = [];
+    duplicados.forEach(([, copias]) => {
+      copias.forEach(c => { if (fechaISOValidaSimple(c.fila.date)) fechasDeDuplicados.push(c.fila.date); });
+    });
+    if (!fechasDeDuplicados.length) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">Ninguna copia duplicada tiene un campo "date" válido. No se puede calcular el rango para consultar MLB.</div></div>`);
+      setEstado("Fase 1 detenida: sin fechas válidas.");
+      return;
+    }
+    fechasDeDuplicados.sort();
+    const fechaMin = fechasDeDuplicados[0];
+    const fechaMax = fechasDeDuplicados[fechasDeDuplicados.length - 1];
+
+    setEstado(`Fase 1: una sola llamada a schedule (${fechaMin} → ${fechaMax}) para ${duplicados.length} gamePk duplicado(s)...`);
+
+    let mapaSchedule;
+    try {
+      mapaSchedule = await construirMapaScheduleRango(fechaMin, fechaMax);
+    } catch (e) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR DE RED</div><div class="meta">No se pudo traer el schedule por rango: ${e && e.message ? e.message : e}</div></div>`);
+      setEstado("Fase 1 detenida: error de red.");
+      return;
+    }
+
+    const decisiones = [];
+    const indicesAEliminar = new Set();
+    const conflictos = [];
+    const firmasPorIndice = new Map(); // indice -> { gamePk, date, firma }
+
+    duplicados.forEach(([gamePk, copias]) => {
+      const info = mapaSchedule.get(gamePk);
+
+      if (!info || !info.gameDate) {
+        conflictos.push({ gamePk, motivo: "SIN_MATCH_SCHEDULE — MLB no devolvió este gamePk en el rango consultado" });
+        decisiones.push({ gamePk, copias, resuelto: false, motivo: "SIN_MATCH_SCHEDULE" });
+        return;
+      }
+
+      const dGame = new Date(info.gameDate);
+      if (isNaN(dGame.getTime())) {
+        conflictos.push({ gamePk, motivo: "GAMEDATE_INVALIDO" });
+        decisiones.push({ gamePk, copias, resuelto: false, motivo: "GAMEDATE_INVALIDO" });
+        return;
+      }
+
+      const nombreParque = info.venueNombre || (copias[0] && copias[0].fila.venue);
+      const stadium = (typeof stadiumGet === "function") ? stadiumGet(nombreParque) : null;
+      const tz = stadium && stadium.timezone ? stadium.timezone : null;
+
+      if (!tz) {
+        conflictos.push({ gamePk, motivo: "SIN_TIMEZONE_VENUE (" + (nombreParque || "N/C") + ")" });
+        decisiones.push({ gamePk, copias, resuelto: false, motivo: "SIN_TIMEZONE_VENUE" });
+        return;
+      }
+
+      const fechaLocalCorrecta = fechaEnZonaLocal(dGame, tz);
+      const coincidencias = copias.filter(c => c.fila.date === fechaLocalCorrecta);
+
+      if (coincidencias.length === 1) {
+        const indiceConservar = coincidencias[0].indice;
+        const indicesEliminarDeEsteGrupo = copias
+          .filter(c => c.indice !== indiceConservar)
+          .map(c => c.indice);
+
+        // Firma completa de CADA copia involucrada (conservar Y eliminar),
+        // capturada AHORA, para verificar byte a byte en la Fase 2.
+        copias.forEach(c => {
+          firmasPorIndice.set(c.indice, {
+            gamePk: gamePk,
+            date: c.fila.date,
+            firma: JSON.stringify(c.fila)
+          });
+        });
+
+        indicesEliminarDeEsteGrupo.forEach(i => indicesAEliminar.add(i));
+
+        decisiones.push({
+          gamePk, copias, resuelto: true,
+          gameDateOficial: info.gameDate,
+          timezoneUsado: tz,
+          fechaLocalCorrecta,
+          indiceConservar,
+          indicesEliminar: indicesEliminarDeEsteGrupo,
+          motivo: "La fecha local correcta (gameDate oficial de MLB + timezone real del parque) coincide con el date del índice " + indiceConservar + ". Las demás copias tienen date incorrecto y se eliminan."
+        });
+      } else {
+        const detalle = coincidencias.length === 0
+          ? "NINGUNA copia tiene date == fecha local correcta (" + fechaLocalCorrecta + ")"
+          : "MÁS DE UNA copia (" + coincidencias.length + ") tiene date == fecha local correcta (" + fechaLocalCorrecta + ") — empate";
+        conflictos.push({ gamePk, motivo: detalle });
+        decisiones.push({
+          gamePk, copias, resuelto: false,
+          gameDateOficial: info.gameDate, timezoneUsado: tz, fechaLocalCorrecta,
+          motivo: detalle
+        });
+      }
+    });
+
+    ULTIMA_AUDITORIA = {
+      filasTotalesAlAuditar: filasTotales,
+      decisiones,
+      indicesAEliminar,
+      conflictos,
+      firmasPorIndice
+    };
+
+    const html = `
+      <div class="bloque">
+        <div class="titulo">Fase 1 — Auditoría de duplicados contra MLB StatsAPI</div>
+        <div class="meta">Filas totales en el caché al auditar: <b>${filasTotales}</b></div>
+        <div class="meta">gamePk duplicados encontrados: <b>${duplicados.length}</b></div>
+        <div class="meta ${conflictos.length === 0 ? 'ok' : 'bad'}">Resueltos automáticamente: <b>${decisiones.filter(d => d.resuelto).length}</b> · Sin resolver (CONFLICTO_NO_RESUELTO): <b>${conflictos.length}</b></div>
+        <div class="meta">Filas marcadas para eliminar: <b>${indicesAEliminar.size}</b></div>
+        <div class="meta ${conflictos.length === 0 ? 'ok' : 'bad'}">
+          ${conflictos.length === 0
+            ? "Todos los duplicados quedaron resueltos. La Fase 2 ya está habilitada."
+            : "HAY " + conflictos.length + " gamePk SIN RESOLVER. La Fase 2 permanece BLOQUEADA POR COMPLETO (limpieza es todo o nada) hasta resolver manualmente — revisar la tabla de abajo."}
+        </div>
+      </div>
+      <div class="bloque">
+        <div class="titulo">Detalle por gamePk duplicado</div>
+        <table class="tabla">
+          <tr>
+            <th>gamePk</th><th>copias (fecha / índice)</th><th>gameDate MLB</th><th>timezone</th>
+            <th>fecha local correcta</th><th>conservar</th><th>eliminar</th><th>motivo</th>
+          </tr>
+          ${decisiones.map(d => `
+            <tr>
+              <td>${d.gamePk}</td>
+              <td>${d.copias.map(c => (c.fila.date || "N/C") + " / idx " + c.indice).join("<br>")}</td>
+              <td>${d.gameDateOficial || "NO_CONFIRMADO"}</td>
+              <td>${d.timezoneUsado || "NO_CONFIRMADO"}</td>
+              <td>${d.fechaLocalCorrecta || "NO_CONFIRMADO"}</td>
+              <td class="${d.resuelto ? 'ok' : 'bad'}">${d.resuelto ? d.indiceConservar : "—"}</td>
+              <td class="${d.resuelto ? 'ok' : 'bad'}">${d.resuelto ? d.indicesEliminar.join(", ") : "—"}</td>
+              <td>${d.motivo}</td>
+            </tr>
+          `).join("")}
+        </table>
+      </div>
+    `;
+    render(html);
+
+    if (conflictos.length === 0) {
+      document.getElementById("btnLimpieza").disabled = false;
+      setEstado("Fase 1 completa. " + indicesAEliminar.size + " fila(s) marcada(s) para eliminar. Fase 2 habilitada.");
+    } else {
+      document.getElementById("btnLimpieza").disabled = true;
+      setEstado("Fase 1 completa CON conflictos sin resolver (" + conflictos.length + "). Fase 2 bloqueada.");
+    }
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 1: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+
+/* ============================================================
+   FASE 2 — limpieza controlada (escribe localStorage, con
+   verificación de firma completa antes de borrar)
+   ============================================================ */
+function fase2_ejecutarLimpieza() {
+  try {
+    if (!ULTIMA_AUDITORIA) {
+      setEstado("Corre primero la Fase 1.");
+      return;
+    }
+    if (ULTIMA_AUDITORIA.conflictos.length > 0) {
+      setEstado("No se puede limpiar: hay " + ULTIMA_AUDITORIA.conflictos.length + " gamePk sin resolver.");
+      return;
+    }
+
+    const CORE = window.MLBPRO_CORE;
+    const filasActuales = CORE.leerHistoricoCache();
+
+    if (!Array.isArray(filasActuales)) {
+      setEstado("ERROR: el caché no devolvió un array al releer para limpiar.");
+      return;
+    }
+
+    // --- Verificación 1: tamaño total ---
+    if (filasActuales.length !== ULTIMA_AUDITORIA.filasTotalesAlAuditar) {
+      render(`<div class="bloque"><div class="titulo bad">LIMPIEZA DETENIDA</div>
+        <div class="meta">El caché tenía ${ULTIMA_AUDITORIA.filasTotalesAlAuditar} filas durante la Fase 1 y ahora tiene ${filasActuales.length}. Corre la Fase 1 de nuevo antes de limpiar.</div></div>`);
+      setEstado("Limpieza detenida: el caché cambió de tamaño desde la auditoría.");
+      document.getElementById("btnLimpieza").disabled = true;
+      return;
+    }
+
+    // --- Verificación 2: firma completa de CADA fila involucrada (conservar + eliminar) ---
+    const firmasEsperadas = ULTIMA_AUDITORIA.firmasPorIndice;
+    const fallosVerificacion = [];
+
+    firmasEsperadas.forEach((esperado, indice) => {
+      if (indice < 0 || indice >= filasActuales.length) {
+        fallosVerificacion.push({ indice, motivo: "ÍNDICE_FUERA_DE_RANGO" });
+        return;
+      }
+      const filaActual = filasActuales[indice];
+      const gamePkActual = filaActual && filaActual.gamePk != null ? String(filaActual.gamePk) : null;
+      const dateActual = filaActual ? filaActual.date : null;
+      const firmaActual = JSON.stringify(filaActual);
+
+      if (gamePkActual !== esperado.gamePk) {
+        fallosVerificacion.push({ indice, motivo: "gamePk cambió: esperado " + esperado.gamePk + ", actual " + gamePkActual });
+        return;
+      }
+      if (dateActual !== esperado.date) {
+        fallosVerificacion.push({ indice, motivo: "date cambió: esperado " + esperado.date + ", actual " + dateActual });
+        return;
+      }
+      if (firmaActual !== esperado.firma) {
+        fallosVerificacion.push({ indice, motivo: "FIRMA_COMPLETA_DISTINTA — el contenido de esta fila cambió desde la Fase 1" });
+      }
+    });
+
+    if (fallosVerificacion.length > 0) {
+      render(`<div class="bloque"><div class="titulo bad">LIMPIEZA DETENIDA — VERIFICACIÓN DE FIRMA FALLÓ</div>
+        <div class="meta">${fallosVerificacion.length} fila(s) ya no coinciden con lo auditado en la Fase 1. No se borra nada. Corre la Fase 1 de nuevo.</div>
+        <table class="tabla"><tr><th>índice</th><th>motivo</th></tr>
+        ${fallosVerificacion.map(f => `<tr><td>${f.indice}</td><td>${f.motivo}</td></tr>`).join("")}
+        </table>
+      </div>`);
+      setEstado("Limpieza detenida: " + fallosVerificacion.length + " fila(s) fallaron la verificación de firma.");
+      document.getElementById("btnLimpieza").disabled = true;
+      return;
+    }
+
+    const indicesAEliminar = ULTIMA_AUDITORIA.indicesAEliminar;
+    const cantidadABorrar = indicesAEliminar.size;
+
+    if (cantidadABorrar === 0) {
+      setEstado("No hay ninguna fila marcada para eliminar.");
+      return;
+    }
+
+    const confirmado = confirm(
+      "Verificación de firma OK en las " + firmasEsperadas.size + " fila(s) involucradas.\n\n" +
+      "¿Borrar exactamente " + cantidadABorrar + " fila(s) duplicada(s) incorrecta(s) de " +
+      filasActuales.length + " filas totales?\n\n" +
+      "Esto escribe en localStorage vía CORE.guardarHistoricoCache() y no se puede deshacer fácilmente."
+    );
+    if (!confirmado) {
+      setEstado("Limpieza cancelada por el usuario.");
+      return;
+    }
+
+    const filasEsperadasTrasLimpiar = filasActuales.length - cantidadABorrar;
+    const filasNuevas = filasActuales.filter((_, indice) => !indicesAEliminar.has(indice));
+
+    CORE.guardarHistoricoCache(filasNuevas);
+    // guardarHistoricoCache() no devuelve ningún valor (revisado en
+    // mlbpro-core.js: try/catch mudo sobre localStorage.setItem). La única
+    // confirmación real de éxito posible es releer el caché ahora mismo.
+
+    const filasTrasLimpiar = CORE.leerHistoricoCache();
+    const conteoPost = new Map();
+    filasTrasLimpiar.forEach(f => {
+      if (!f || f.gamePk == null) return;
+      const k = String(f.gamePk);
+      conteoPost.set(k, (conteoPost.get(k) || 0) + 1);
+    });
+    const gamePksUnicosPost = conteoPost.size;
+    const duplicadosPost = Array.from(conteoPost.values()).filter(n => n > 1).length;
+
+    const coincideConEsperadoMatematico =
+      filasTrasLimpiar.length === filasEsperadasTrasLimpiar &&
+      gamePksUnicosPost === filasTrasLimpiar.length &&
+      duplicadosPost === 0;
+
+    agregar(`
+      <div class="bloque">
+        <div class="titulo">Fase 2 — Limpieza ejecutada</div>
+        <div class="meta">Filas antes de limpiar: <b>${filasActuales.length}</b></div>
+        <div class="meta">Filas eliminadas: <b>${cantidadABorrar}</b></div>
+        <div class="meta">Filas esperadas tras limpiar (matemático: antes − eliminadas): <b>${filasEsperadasTrasLimpiar}</b></div>
+        <div class="meta ${filasTrasLimpiar.length === filasEsperadasTrasLimpiar ? 'ok' : 'bad'}">Filas reales tras limpiar (releído de localStorage): <b>${filasTrasLimpiar.length}</b></div>
+        <div class="meta ${gamePksUnicosPost === filasTrasLimpiar.length ? 'ok' : 'bad'}">gamePk únicos tras limpiar: <b>${gamePksUnicosPost}</b></div>
+        <div class="meta ${duplicadosPost === 0 ? 'ok' : 'bad'}">Duplicados restantes: <b>${duplicadosPost}</b></div>
+        <div class="meta" style="margin-top:8px">Referencia informativa (lo que Perez esperaba): 1,525 filas / 1,525 gamePk únicos / 0 duplicados.</div>
+        ${coincideConEsperadoMatematico
+          ? `<div class="meta ok" style="margin-top:8px"><b>LIMPIEZA CERRADA CORRECTAMENTE.</b> El resultado real coincide con lo esperado matemáticamente (filas antes − eliminadas, gamePk únicos = filas, 0 duplicados).</div>`
+          : `<div class="meta bad" style="margin-top:8px"><b>ERROR: EL RESULTADO REAL NO COINCIDE CON LO ESPERADO.</b> La limpieza NO se declara cerrada. Revisar manualmente el caché antes de continuar con cualquier otro paso.</div>`
+        }
+      </div>
+    `);
+    document.getElementById("btnLimpieza").disabled = true;
+    ULTIMA_AUDITORIA = null;
+    setEstado(
+      (coincideConEsperadoMatematico ? "Limpieza CERRADA. " : "Limpieza con ERROR — no cerrada. ") +
+      filasTrasLimpiar.length + " filas, " + gamePksUnicosPost + " gamePk únicos, " + duplicadosPost + " duplicados restantes."
+    );
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 2: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
