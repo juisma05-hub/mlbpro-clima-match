@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MLBPro · Enriquecer hora + picheo</title>
+<style>
+body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:18px;color:#f5c518;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin-bottom:14px}
+button{width:100%;padding:14px;margin:6px 0;font-size:14px;font-weight:800;color:#000;background:#f5c518;border:none;border-radius:12px}
+button:disabled{opacity:.4}
+button.warn{background:#da3633;color:#fff}
+#estado{margin:12px 0;font-size:13px;color:#9ad}
+.bloque{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+.titulo{font-size:15px;font-weight:800;color:#fff;margin-bottom:8px}
+.meta{font-size:13px;color:#ddd;margin:4px 0}
+.ok{color:#32d74b;font-weight:800}
+.mid{color:#ffd60a;font-weight:800}
+.bad{color:#ff453a;font-weight:800}
+.small{font-size:12px;color:#aaa;margin-top:5px}
+.tabla{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.tabla th,.tabla td{border:1px solid #222;padding:5px;text-align:left;color:#ccc;vertical-align:top}
+.tabla th{background:#151515;color:#f5c518}
+</style>
+</head>
+<body>
+<h1>MLBPro · Enriquecer hora + picheo</h1>
+<div class="sub">Fase 1: auditoría contra MLB StatsAPI (solo lectura) · Fase 2: enriquecimiento controlado, solo si Fase 1 no dejó bloqueos</div>
+
+<button onclick="fase1_auditar()">1) AUDITAR HORA + PARQUE + ABRIDORES CONTRA MLB</button>
+<button class="warn" id="btnEnriquecer" onclick="fase2_enriquecer()" disabled>2) ENRIQUECER (agrega campos, verifica firma antes de guardar)</button>
+
+<div id="estado">Listo.</div>
+<div id="reporte"></div>
+
+<script src="estadios.js"></script>
+<script src="mlbpro-core.js"></script>
+<script src="mlb-routes.js"></script>
+<script src="pitchers-master.js"></script>
+
+<script>
+/* ============================================================
+   PRÓLOGO — enriquecer-hora-picheo.html
+   ============================================================
+   QUÉ ES:
+     Archivo ÚNICO y FINAL, en dos fases, para enriquecer la Data
+     Madre ya limpia (MLBPRO_DATA_MADRE_HIST_2026_V1, se espera
+     1,525 filas / 1,525 gamePk únicos / 0 duplicados tras la
+     limpieza previa) con hora real del juego y abridores oficiales
+     confirmados. No borra, duplica ni sobrescribe ningún campo ya
+     existente — solo AGREGA campos nuevos, y solo cuando es seguro
+     hacerlo.
+
+   DECISIÓN DE ARQUITECTURA — CÓMO SE CONFIRMA EL ABRIDOR REAL:
+     Esta herramienta NO reutiliza F5_HISTORICO_CARRERAJE_2026 como
+     fuente de abridores, porque esa caché solo cubre una parte de
+     Data Madre (auditada antes: 1,424 de 1,538 filas antes de la
+     limpieza), y el requisito de habilitar la Fase 2 exige "ambos
+     abridores confirmados en TODAS las filas". En su lugar, esta
+     herramienta CONFIRMA el abridor real de cada juego consultando
+     /game/{gamePk}/boxscore directamente, con la MISMA lógica ya
+     usada y aprobada en f5-historico-carreraje.js: un jugador cuenta
+     como abridor real solo si stats.pitching.gamesStarted === 1, y
+     solo si es EXACTAMENTE UNO por equipo. Esto implica una llamada
+     de red por cada gamePk (no existe endpoint de MLB que traiga
+     boxscores en bloque por rango de fechas) — es la razón real
+     detrás del requisito de concurrencia limitada, reintentos y
+     progreso visible.
+
+   CORRECCIÓN 1 — CONFLICTO DE PARQUE (agregada en esta pasada):
+     La versión anterior obtenía el venue oficial de MLB (via
+     schedule) pero nunca lo comparaba contra fila.venue — un error
+     real, porque MLB puede usar un alias de nombre distinto al que
+     ya está guardado en Data Madre para el MISMO parque físico.
+     Ahora, para cada gamePk con match en schedule, ambos nombres de
+     parque (el oficial de MLB y el ya guardado en la fila) se
+     CANONIZAN con las funciones reales de estadios.js —
+     stadiumCanonName() seguido de stadiumNorm(), exactamente el
+     mismo patrón que ya usa index.html en
+     generarConclusionCoincidencia() para comparar parques
+     (stadiumNorm(stadiumCanonName(x.venue))) — y solo entonces se
+     comparan. Nunca se comparan los textos crudos, porque un simple
+     alias distinto produciría un falso CONFLICTO_PARQUE si se
+     comparara texto sin canonizar. Si tras canonizar ambos nombres
+     siguen sin coincidir, o si stadiumCanonName/stadiumNorm no están
+     disponibles para poder canonizar con confianza, la fila queda
+     marcada como conflicto de parque y BLOQUEA la Fase 2 por
+     completo — nunca se ignora silenciosamente.
+
+   CORRECCIÓN 2 — NO SOBRESCRIBIR ENRIQUECIMIENTO PREVIO (agregada en
+   esta pasada):
+     La versión anterior construía cada fila nueva con
+     { ...filaVieja, ...camposNuevos }, lo cual REEMPLAZARÍA en
+     silencio cualquiera de los 14 campos de enriquecimiento si ya
+     existieran de una corrida previa de esta misma herramienta. Ahora,
+     antes de habilitar la Fase 2, cada fila se revisa: si YA
+     contiene cualquiera de los 14 campos de enriquecimiento
+     (gameDateOficial, timezoneParque, fechaLocalOficial,
+     horaLocalReal, pitcherAwayId, pitcherAwayNombre, pitcherHomeId,
+     pitcherHomeNombre, perfilPitcherAway, perfilPitcherHome,
+     estadoPitcherAway, estadoPitcherHome, estadoEnriquecimientoHora,
+     estadoEnriquecimientoPicheo), se compara CADA UNO de esos campos
+     ya guardados contra lo que la auditoría nueva acaba de calcular
+     para esa misma fila:
+       - Si TODOS coinciden exactamente (JSON.stringify por campo):
+         la fila queda YA_ENRIQUECIDA_COINCIDENTE. En la Fase 2, esa
+         fila NO se toca — se deja tal cual está, sin reescribir nada
+         (aunque el resultado sería idéntico, nunca se sobrescribe
+         "por si acaso").
+       - Si CUALQUIER campo difiere (incluyendo el caso de que solo
+         algunos de los 14 campos existan ya, y los demás falten): la
+         fila queda CONFLICTO_ENRIQUECIMIENTO_EXISTENTE y esto
+         BLOQUEA la Fase 2 COMPLETA — la limpieza/enriquecimiento
+         sigue siendo todo o nada, nunca parcial, y nunca se decide
+         automáticamente cuál versión del enriquecimiento es la
+         correcta.
+
+   FUENTES QUE LEE:
+     - CORE.leerHistoricoCache() — única forma de leer Data Madre.
+     - MLB Stats API, schedule por RANGO de fechas, UNA sola llamada,
+       para gameDate oficial y venue oficial.
+     - MLB Stats API, /game/{gamePk}/boxscore, UNA llamada POR
+       gamePk (concurrencia limitada, con reintentos), para confirmar
+       abridor real de cada equipo.
+     - stadiumGet(), stadiumCanonName(), stadiumNorm() de estadios.js
+       — timezone real del parque y canonización de nombres de venue.
+     - PITCHERS_MASTER_2026 (pitchers-master.js) — variable real
+       confirmada por inspección directa del archivo; no se inventa
+       ningún otro nombre.
+
+   FASE 1 — auditoría (SOLO LECTURA, no escribe nada):
+     1. Verifica Data Madre limpia (filas totales, gamePk únicos,
+        duplicados, filas sin gamePk, fechas mínima/máxima). Si algo
+        no cuadra, BLOQUEA antes de tocar la red.
+     2. UNA sola llamada a schedule por rango para gameDate + venue
+        oficial de todos los juegos.
+     3. Por fila: resuelve timezone (stadiumGet), calcula fecha y
+        hora local real. Compara fecha local oficial contra row.date
+        (CONFLICTO_FECHA si no coincide) y compara el venue oficial
+        CANONIZADO contra el venue guardado CANONIZADO
+        (CONFLICTO_PARQUE si no coincide). Ninguno de los dos se
+        corrige automáticamente.
+     4. Con concurrencia limitada (5) y hasta 3 reintentos por juego,
+        confirma abridor real (id + nombre) de visitante y local via
+        boxscore, con la regla de gamesStarted===1 y candidato único.
+     5. Cruza cada pitcher_id confirmado contra PITCHERS_MASTER_2026
+        (copia independiente del perfil, o null si no está).
+     6. Revisa si la fila YA tiene campos de enriquecimiento previo y
+        los compara contra lo recién calculado (ver Corrección 2).
+     7. Muestra todos los conteos pedidos, tabla de anomalías, y
+        lista de pitchers faltantes en el master.
+
+   FASE 2 — enriquecimiento controlado (ESCRIBE, con verificación de
+   firma completa y de campos protegidos):
+     Solo se habilita si TODO lo siguiente se cumplió en la Fase 1:
+     0 duplicados, 0 filas sin gamePk, 0 conflictos estructurales
+     (CONFLICTO_FECHA, CONFLICTO_PARQUE, sin match en schedule, sin
+     timezone, error de red sin resolver, canonización no disponible),
+     0 CONFLICTO_ENRIQUECIMIENTO_EXISTENTE, TODAS las filas con hora
+     local real, y AMBOS abridores confirmados en TODAS las filas.
+     Antes de escribir, vuelve a leer el caché y verifica, fila por
+     fila: mismo tamaño, mismo orden, mismo índice, mismo gamePk,
+     mismo date, y FIRMA COMPLETA (JSON.stringify de la fila entera)
+     idéntica a la capturada en la Fase 1. Si una sola fila cambió,
+     se detiene todo y exige repetir la Fase 1.
+     Para cada fila: si quedó YA_ENRIQUECIDA_COINCIDENTE, se deja
+     intacta sin tocar. Para las demás, se construye como copia
+     (spread) de la fila original MÁS los 14 campos nuevos. Antes de
+     guardar, verifica explícitamente que ninguno de los 26 campos
+     protegidos cambió de valor — si alguno cambiaría, aborta sin
+     guardar nada.
+     Guarda ÚNICAMENTE con CORE.guardarHistoricoCache() (mlbpro-
+     core.js sigue CONGELADO, sin modificar). Esa función no devuelve
+     valor — la única confirmación honesta de éxito es releer el
+     caché después, que es lo que hace este archivo, incluyendo una
+     segunda verificación de campos protegidos ya guardados.
+
+   RED Y REANUDACIÓN:
+     Concurrencia limitada a 5 llamadas de boxscore en paralelo.
+     Hasta 3 reintentos con backoff (300/600/900ms) por gamePk antes
+     de contarlo como error de red definitivo. Progreso visible en
+     #estado. La Fase 1 nunca escribe nada, así que si la sesión se
+     cae a la mitad, basta con volver a correr la Fase 1 completa sin
+     contaminar Data Madre.
+
+   QUÉ NO HACE ESTA HERRAMIENTA:
+     No elimina ni duplica filas. No modifica fechas ni parques
+     existentes. No toca clima, trayectoria, resultados ni métricas
+     ya guardadas. No usa datos "live". No usa probablePitcher como
+     sustituto del abridor histórico real. No elige pitcher por
+     nombre cuando hay ID oficial. No guarda resultados parciales. No
+     sobrescribe silenciosamente ningún enriquecimiento ya guardado.
+     No compara nombres de parque como texto crudo. No toca
+     index.html, mlbpro-core.js, mlb-routes.js, pitchers-master.js,
+     F5, K6, Coincidencia, Moneyline ni Over/Under. Esta es la única
+     versión de este archivo.
+
+   ESTADO:
+     Corregida tras revisión de Perez: se agregó auditoría de
+     conflicto de parque con nombres canonizados, y detección de
+     enriquecimiento previo (coincidente vs en conflicto) antes de
+     escribir. Todo lo demás se mantiene: boxscore por gamePk,
+     concurrencia 5, tres reintentos, firma completa, campos
+     protegidos, guardado único. Ninguna fase se ha corrido todavía.
+
+   FECHA:
+     22 jul 2026.
+   ============================================================ */
+
+const MLB_BASE = "https://statsapi.mlb.com/api/v1";
+const CONCURRENCIA_BOXSCORE = 5;
+const REINTENTOS_BOXSCORE = 3;
+
+const CAMPOS_PROTEGIDOS = [
+  "gamePk","date","away","home","venue","venueId","roof","lat","lon",
+  "tempF","humidity","precip","windMph","windDir","timezoneUsado",
+  "horaLocalObjetivo","horaClimaUtilizada","trayectoriaViento",
+  "awayRuns","homeRuns","totalRuns","awayKs","homeKs","totalKs",
+  "awayHRs","homeHRs","totalHRs"
+];
+
+const CAMPOS_ENRIQUECIMIENTO = [
+  "gameDateOficial","timezoneParque","fechaLocalOficial","horaLocalReal",
+  "pitcherAwayId","pitcherAwayNombre","pitcherHomeId","pitcherHomeNombre",
+  "perfilPitcherAway","perfilPitcherHome","estadoPitcherAway","estadoPitcherHome",
+  "estadoEnriquecimientoHora","estadoEnriquecimientoPicheo"
+];
+
+function setEstado(t) { document.getElementById("estado").textContent = t; }
+function render(html) { document.getElementById("reporte").innerHTML = html; }
+function agregar(html) { document.getElementById("reporte").innerHTML += html; }
+
+function fechaISOValidaSimple(iso) {
+  return typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso);
+}
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function fechaEnZonaLocal(date, tz) {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit"
+  });
+  return fmt.format(date);
+}
+function horaEnZonaLocal(date, tz) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour: "numeric", minute: "2-digit", hour12: false
+  });
+  const parts = fmt.formatToParts(date);
+  const h = parts.find(p => p.type === "hour");
+  const m = parts.find(p => p.type === "minute");
+  let hv = h ? parseInt(h.value, 10) : NaN;
+  if (hv === 24) hv = 0;
+  const mv = m ? m.value : "00";
+  return isNaN(hv) ? null : (pad2(hv) + ":" + mv);
+}
+
+async function construirMapaScheduleRango(fechaMin, fechaMax) {
+  const url = MLB_ROUTES.WORKER_BASE + encodeURIComponent(
+    `${MLB_BASE}/schedule?sportId=1&startDate=${fechaMin}&endDate=${fechaMax}&hydrate=venue`
+  );
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("SCHEDULE RANGO HTTP " + r.status);
+  const j = await r.json();
+  const dates = Array.isArray(j.dates) ? j.dates : [];
+  const mapa = new Map();
+  dates.forEach(d => {
+    (d.games || []).forEach(g => {
+      if (g.gamePk == null) return;
+      mapa.set(String(g.gamePk), {
+        gameDate: g.gameDate || null,
+        venueNombre: (g.venue && g.venue.name) ? g.venue.name : null
+      });
+    });
+  });
+  return mapa;
+}
+
+// Misma regla exacta de f5-historico-carreraje.js: candidato único con
+// gamesStarted===1, nunca se asume el primero de una lista.
+function resolverAbridorReal(players) {
+  if (!players || typeof players !== "object") return null;
+  const candidatos = [];
+  Object.keys(players).forEach(k => {
+    const p = players[k];
+    const gs = p && p.stats && p.stats.pitching ? p.stats.pitching.gamesStarted : undefined;
+    if (Number(gs) === 1 && p.person && p.person.id != null) {
+      candidatos.push({ id: p.person.id, nombre: p.person.fullName || null });
+    }
+  });
+  if (candidatos.length !== 1) return null;
+  return candidatos[0];
+}
+
+async function fetchJSONConReintento(url, intentos) {
+  let ultimoError;
+  for (let i = 0; i < intentos; i++) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    } catch (e) {
+      ultimoError = e;
+      if (i < intentos - 1) await new Promise(res => setTimeout(res, 300 * (i + 1)));
+    }
+  }
+  throw ultimoError;
+}
+
+async function fetchBoxscore(gamePk) {
+  const url = MLB_ROUTES.WORKER_BASE + encodeURIComponent(`${MLB_BASE}/game/${gamePk}/boxscore`);
+  return await fetchJSONConReintento(url, REINTENTOS_BOXSCORE);
+}
+
+async function mapConcurrente(items, limite, fn, onProgreso) {
+  const resultados = new Array(items.length);
+  let cursor = 0, completados = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const i = cursor++;
+      resultados[i] = await fn(items[i], i);
+      completados++;
+      if (onProgreso) onProgreso(completados, items.length);
+    }
+  }
+  const nWorkers = Math.min(limite, items.length) || 1;
+  await Promise.all(Array.from({ length: nWorkers }, worker));
+  return resultados;
+}
+
+function copiaIndependiente(obj) {
+  return obj == null ? null : JSON.parse(JSON.stringify(obj));
+}
+
+// --- canonización de nombres de parque, SOLO con las funciones reales de estadios.js ---
+function tieneFuncionesCanon() {
+  return typeof stadiumCanonName === "function" && typeof stadiumNorm === "function";
+}
+function canonizarVenue(nombre) {
+  if (!nombre || !tieneFuncionesCanon()) return null;
+  try { return stadiumNorm(stadiumCanonName(nombre)); } catch (e) { return null; }
+}
+
+// --- detección de enriquecimiento previo, campo por campo ---
+function filaYaTieneEnriquecimiento(fila) {
+  return CAMPOS_ENRIQUECIMIENTO.some(c => Object.prototype.hasOwnProperty.call(fila, c));
+}
+function compararEnriquecimientoExistente(filaVieja, camposNuevos) {
+  const diferencias = [];
+  CAMPOS_ENRIQUECIMIENTO.forEach(c => {
+    const viejo = Object.prototype.hasOwnProperty.call(filaVieja, c) ? filaVieja[c] : undefined;
+    const nuevo = camposNuevos[c];
+    if (JSON.stringify(viejo) !== JSON.stringify(nuevo)) {
+      diferencias.push({ campo: c, valorViejo: viejo, valorNuevo: nuevo });
+    }
+  });
+  return { coincideExacto: diferencias.length === 0, diferencias };
+}
+
+let ULTIMA_AUDITORIA = null;
+// { filasTotalesAlAuditar, snapshotFirmas: Map(indice -> firma),
+//   enriquecidas: [ { indice, gamePk, camposNuevos, estadoEnriquecimientoPrevio } ],
+//   puedeEnriquecer: bool }
+
+/* ============================================================
+   FASE 1 — auditoría (solo lectura)
+   ============================================================ */
+async function fase1_auditar() {
+  try {
+    document.getElementById("btnEnriquecer").disabled = true;
+    ULTIMA_AUDITORIA = null;
+    setEstado("Fase 1: leyendo Data Madre...");
+    render("");
+
+    if (typeof window.MLBPRO_CORE === "undefined" || typeof window.MLBPRO_CORE.leerHistoricoCache !== "function") {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">CORE.leerHistoricoCache no disponible.</div></div>`);
+      setEstado("Detenido: CORE no disponible."); return;
+    }
+    if (typeof MLB_ROUTES === "undefined" || !MLB_ROUTES.WORKER_BASE) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">MLB_ROUTES no disponible (mlb-routes.js no está cargando).</div></div>`);
+      setEstado("Detenido: MLB_ROUTES no disponible."); return;
+    }
+    const tienePitchersMaster = (typeof PITCHERS_MASTER_2026 !== "undefined");
+    if (!tienePitchersMaster) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">La variable PITCHERS_MASTER_2026 no está disponible. No se inventa un nombre alternativo — corregir la carga del archivo.</div></div>`);
+      setEstado("Detenido: PITCHERS_MASTER_2026 no disponible."); return;
+    }
+    if (!tieneFuncionesCanon()) {
+      render(`<div class="bloque"><div class="titulo mid">AVISO</div><div class="meta">stadiumCanonName() y/o stadiumNorm() no están disponibles en estadios.js. La auditoría continuará, pero NINGÚN gamePk podrá confirmar coincidencia de parque con confianza — todos quedarán SIN_FUNCIONES_CANON, lo cual bloqueará la Fase 2.</div></div>`);
+    }
+
+    const CORE = window.MLBPRO_CORE;
+    const filas = CORE.leerHistoricoCache();
+    if (!Array.isArray(filas)) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">CORE.leerHistoricoCache() no devolvió un array.</div></div>`);
+      setEstado("Detenido: caché no es array."); return;
+    }
+
+    const filasTotales = filas.length;
+    const filasSinGamePk = filas.filter(f => !f || f.gamePk == null || f.gamePk === "");
+    const conteoGamePk = new Map();
+    filas.forEach(f => {
+      if (!f || f.gamePk == null) return;
+      const k = String(f.gamePk);
+      conteoGamePk.set(k, (conteoGamePk.get(k) || 0) + 1);
+    });
+    const gamePksUnicos = conteoGamePk.size;
+    const duplicados = Array.from(conteoGamePk.entries()).filter(([, n]) => n > 1);
+    const fechasValidas = filas.map(f => f && f.date).filter(fechaISOValidaSimple);
+    const fechasInvalidas = filasTotales - fechasValidas.length;
+
+    agregar(`
+      <div class="bloque">
+        <div class="titulo">Verificación previa de Data Madre</div>
+        <div class="meta">Filas totales: <b>${filasTotales}</b></div>
+        <div class="meta">gamePk únicos: <b>${gamePksUnicos}</b></div>
+        <div class="meta ${duplicados.length === 0 ? 'ok' : 'bad'}">Duplicados: <b>${duplicados.length}</b></div>
+        <div class="meta ${filasSinGamePk.length === 0 ? 'ok' : 'bad'}">Filas sin gamePk: <b>${filasSinGamePk.length}</b></div>
+        <div class="meta ${fechasInvalidas === 0 ? 'ok' : 'bad'}">Fechas inválidas: <b>${fechasInvalidas}</b></div>
+        <div class="meta">Fecha mínima / máxima: <b>${fechasValidas.length ? fechasValidas.slice().sort()[0] : "N/C"} → ${fechasValidas.length ? fechasValidas.slice().sort()[fechasValidas.length - 1] : "N/C"}</b></div>
+      </div>
+    `);
+
+    const dataMadreSucia = duplicados.length > 0 || filasSinGamePk.length > 0 || fechasInvalidas > 0 || gamePksUnicos !== filasTotales;
+    if (dataMadreSucia) {
+      agregar(`<div class="bloque"><div class="titulo bad">PROCESO BLOQUEADO</div>
+        <div class="meta">Data Madre no está limpia. No se consulta MLB. Corre primero la limpieza de duplicados.</div></div>`);
+      setEstado("Bloqueado: Data Madre no está limpia.");
+      return;
+    }
+
+    fechasValidas.sort();
+    const fechaMin = fechasValidas[0], fechaMax = fechasValidas[fechasValidas.length - 1];
+
+    setEstado(`Fase 1: una sola llamada a schedule (${fechaMin} → ${fechaMax})...`);
+    let mapaSchedule;
+    try {
+      mapaSchedule = await construirMapaScheduleRango(fechaMin, fechaMax);
+    } catch (e) {
+      agregar(`<div class="bloque"><div class="titulo bad">ERROR DE RED</div><div class="meta">Schedule por rango falló: ${e && e.message ? e.message : e}</div></div>`);
+      setEstado("Detenido: error de red en schedule."); return;
+    }
+
+    // --- paso hora + parque (sin red adicional) ---
+    const infoHora = filas.map(fila => {
+      const gamePk = String(fila.gamePk);
+      const info = mapaSchedule.get(gamePk);
+      const base = { gamePk, fila };
+
+      if (!info || !info.gameDate) return { ...base, estadoHora: "JUEGO_NO_ENCONTRADO_SCHEDULE", estadoParque: "NO_APLICA" };
+      const dGame = new Date(info.gameDate);
+      if (isNaN(dGame.getTime())) return { ...base, estadoHora: "GAMEDATE_INVALIDO", gameDateOficial: info.gameDate, estadoParque: "NO_APLICA" };
+
+      // --- conflicto de parque: SIEMPRE comparando nombres canonizados, nunca texto crudo ---
+      let estadoParque;
+      if (!info.venueNombre || !fila.venue) {
+        estadoParque = "SIN_VENUE_PARA_COMPARAR";
+      } else if (!tieneFuncionesCanon()) {
+        estadoParque = "SIN_FUNCIONES_CANON";
+      } else {
+        const venueOficialCanon = canonizarVenue(info.venueNombre);
+        const venueDatoCanon = canonizarVenue(fila.venue);
+        if (venueOficialCanon == null || venueDatoCanon == null) {
+          estadoParque = "SIN_FUNCIONES_CANON";
+        } else {
+          estadoParque = venueOficialCanon === venueDatoCanon ? "OK" : "CONFLICTO_PARQUE";
+        }
+      }
+
+      const venueNombreParaTz = info.venueNombre || fila.venue;
+      const stadium = (typeof stadiumGet === "function") ? stadiumGet(venueNombreParaTz) : null;
+      const tz = stadium && stadium.timezone ? stadium.timezone : null;
+      if (!tz) return { ...base, estadoHora: "SIN_TIMEZONE_VENUE", gameDateOficial: info.gameDate, venueNombre: info.venueNombre, estadoParque };
+
+      const fechaLocalOficial = fechaEnZonaLocal(dGame, tz);
+      const horaLocalReal = horaEnZonaLocal(dGame, tz);
+      const estadoHora = fechaLocalOficial !== fila.date ? "CONFLICTO_FECHA" : "OK";
+
+      return { ...base, estadoHora, gameDateOficial: info.gameDate, timezoneParque: tz, fechaLocalOficial, horaLocalReal, venueNombre: info.venueNombre, estadoParque };
+    });
+
+    // --- paso abridores: boxscore por gamePk, concurrencia limitada ---
+    setEstado("Fase 1: confirmando abridores reales via boxscore (0/" + filas.length + ")...");
+    const infoAbridores = await mapConcurrente(filas, CONCURRENCIA_BOXSCORE, async (fila) => {
+      const gamePk = String(fila.gamePk);
+      try {
+        const box = await fetchBoxscore(gamePk);
+        const homePlayers = box && box.teams && box.teams.home ? box.teams.home.players : null;
+        const awayPlayers = box && box.teams && box.teams.away ? box.teams.away.players : null;
+        const home = resolverAbridorReal(homePlayers);
+        const away = resolverAbridorReal(awayPlayers);
+        return {
+          gamePk,
+          pitcherHomeId: home ? home.id : null,
+          pitcherHomeNombre: home ? home.nombre : null,
+          pitcherAwayId: away ? away.id : null,
+          pitcherAwayNombre: away ? away.nombre : null,
+          errorRed: false
+        };
+      } catch (e) {
+        return { gamePk, pitcherHomeId: null, pitcherHomeNombre: null, pitcherAwayId: null, pitcherAwayNombre: null, errorRed: true, errorMsg: e && e.message ? e.message : String(e) };
+      }
+    }, (hechos, total) => setEstado("Fase 1: confirmando abridores reales via boxscore (" + hechos + "/" + total + ")..."));
+
+    const mapaAbridores = new Map(infoAbridores.map(a => [a.gamePk, a]));
+
+    // --- ensamblar por fila, cruzar con PITCHERS_MASTER_2026, detectar enriquecimiento previo ---
+    const snapshotFirmas = new Map();
+    const enriquecidas = [];
+    const anomalias = [];
+    const pitchersFaltantesMapa = new Map();
+
+    let conGameDateOficial = 0, conTimezone = 0, conFechaCoincidente = 0, conHoraLocal = 0;
+    let conAwayConfirmado = 0, conHomeConfirmado = 0, conAmbosConfirmados = 0;
+    let conPerfilAway = 0, conPerfilHome = 0, conPerfilAmbos = 0;
+    let juegosNoEncontrados = 0, erroresRed = 0, conflictosFecha = 0, sinTimezone = 0, conflictosParque = 0;
+    let filasAfectadasPorPerfilFaltante = 0;
+    let yaEnriquecidasCoincidentes = 0, conflictosEnriquecimientoExistente = 0;
+
+    filas.forEach((fila, indice) => {
+      const gamePk = String(fila.gamePk);
+      snapshotFirmas.set(indice, JSON.stringify(fila));
+
+      const h = infoHora[indice];
+      const a = mapaAbridores.get(gamePk) || {};
+
+      if (h.gameDateOficial) conGameDateOficial++;
+      if (h.timezoneParque) conTimezone++;
+      if (h.estadoHora === "OK") { conFechaCoincidente++; conHoraLocal++; }
+      if (h.estadoHora === "JUEGO_NO_ENCONTRADO_SCHEDULE") juegosNoEncontrados++;
+      if (h.estadoHora === "SIN_TIMEZONE_VENUE") sinTimezone++;
+      if (h.estadoHora === "CONFLICTO_FECHA") conflictosFecha++;
+      if (h.estadoParque === "CONFLICTO_PARQUE" || h.estadoParque === "SIN_FUNCIONES_CANON" || h.estadoParque === "SIN_VENUE_PARA_COMPARAR") conflictosParque++;
+      if (a.errorRed) erroresRed++;
+
+      if (a.pitcherAwayId != null) conAwayConfirmado++;
+      if (a.pitcherHomeId != null) conHomeConfirmado++;
+      if (a.pitcherAwayId != null && a.pitcherHomeId != null) conAmbosConfirmados++;
+
+      const perfilAway = a.pitcherAwayId != null ? (PITCHERS_MASTER_2026[String(a.pitcherAwayId)] || null) : null;
+      const perfilHome = a.pitcherHomeId != null ? (PITCHERS_MASTER_2026[String(a.pitcherHomeId)] || null) : null;
+
+      if (perfilAway) conPerfilAway++;
+      if (perfilHome) conPerfilHome++;
+      if (perfilAway && perfilHome) conPerfilAmbos++;
+
+      let estadoPitcherAway = a.pitcherAwayId == null ? "SIN_ABRIDOR_REAL_CONFIRMADO" : (perfilAway ? "OK" : "PITCHER_FALTANTE_MASTER");
+      let estadoPitcherHome = a.pitcherHomeId == null ? "SIN_ABRIDOR_REAL_CONFIRMADO" : (perfilHome ? "OK" : "PITCHER_FALTANTE_MASTER");
+
+      if (estadoPitcherAway === "PITCHER_FALTANTE_MASTER" || estadoPitcherHome === "PITCHER_FALTANTE_MASTER") {
+        filasAfectadasPorPerfilFaltante++;
+      }
+      if (estadoPitcherAway === "PITCHER_FALTANTE_MASTER" && a.pitcherAwayId != null) {
+        const id = String(a.pitcherAwayId);
+        if (!pitchersFaltantesMapa.has(id)) pitchersFaltantesMapa.set(id, { nombre: a.pitcherAwayNombre, juegos: 0 });
+        pitchersFaltantesMapa.get(id).juegos++;
+      }
+      if (estadoPitcherHome === "PITCHER_FALTANTE_MASTER" && a.pitcherHomeId != null) {
+        const id = String(a.pitcherHomeId);
+        if (!pitchersFaltantesMapa.has(id)) pitchersFaltantesMapa.set(id, { nombre: a.pitcherHomeNombre, juegos: 0 });
+        pitchersFaltantesMapa.get(id).juegos++;
+      }
+
+      const camposNuevos = {
+        gameDateOficial: h.gameDateOficial || null,
+        timezoneParque: h.timezoneParque || null,
+        fechaLocalOficial: h.fechaLocalOficial || null,
+        horaLocalReal: h.horaLocalReal || null,
+        pitcherAwayId: a.pitcherAwayId != null ? a.pitcherAwayId : null,
+        pitcherAwayNombre: a.pitcherAwayNombre || null,
+        pitcherHomeId: a.pitcherHomeId != null ? a.pitcherHomeId : null,
+        pitcherHomeNombre: a.pitcherHomeNombre || null,
+        perfilPitcherAway: copiaIndependiente(perfilAway),
+        perfilPitcherHome: copiaIndependiente(perfilHome),
+        estadoPitcherAway,
+        estadoPitcherHome,
+        estadoEnriquecimientoHora: h.estadoHora,
+        estadoEnriquecimientoPicheo: a.errorRed ? "ERROR_RED" : (a.pitcherAwayId != null && a.pitcherHomeId != null ? "OK" : "SIN_ABRIDOR_REAL_CONFIRMADO")
+      };
+
+      // --- detección de enriquecimiento previo (Corrección 2) ---
+      let estadoEnriquecimientoPrevio = "SIN_ENRIQUECER_PREVIO";
+      let diferenciasPrevias = [];
+      if (filaYaTieneEnriquecimiento(fila)) {
+        const cmp = compararEnriquecimientoExistente(fila, camposNuevos);
+        if (cmp.coincideExacto) {
+          estadoEnriquecimientoPrevio = "YA_ENRIQUECIDA_COINCIDENTE";
+          yaEnriquecidasCoincidentes++;
+        } else {
+          estadoEnriquecimientoPrevio = "CONFLICTO_ENRIQUECIMIENTO_EXISTENTE";
+          diferenciasPrevias = cmp.diferencias;
+          conflictosEnriquecimientoExistente++;
+        }
+      }
+
+      enriquecidas.push({ indice, gamePk, camposNuevos, estadoEnriquecimientoPrevio });
+
+      const tieneAnomalia =
+        h.estadoHora !== "OK" || h.estadoParque !== "OK" || a.errorRed ||
+        a.pitcherAwayId == null || a.pitcherHomeId == null ||
+        estadoEnriquecimientoPrevio === "CONFLICTO_ENRIQUECIMIENTO_EXISTENTE";
+
+      if (tieneAnomalia) {
+        anomalias.push({
+          indice, gamePk, date: fila.date,
+          estadoHora: h.estadoHora, estadoParque: h.estadoParque,
+          estadoPicheo: camposNuevos.estadoEnriquecimientoPicheo,
+          estadoEnriquecimientoPrevio,
+          detalle: a.errorMsg || (diferenciasPrevias.length ? diferenciasPrevias.map(d => d.campo).join(", ") : h.estadoHora)
+        });
+      }
+    });
+
+    const conflictosEstructurales = juegosNoEncontrados + sinTimezone + conflictosFecha + conflictosParque + erroresRed + conflictosEnriquecimientoExistente;
+    const puedeEnriquecer =
+      duplicados.length === 0 && filasSinGamePk.length === 0 &&
+      conflictosEstructurales === 0 &&
+      conHoraLocal === filasTotales &&
+      conAmbosConfirmados === filasTotales;
+
+    ULTIMA_AUDITORIA = { filasTotalesAlAuditar: filasTotales, snapshotFirmas, enriquecidas, puedeEnriquecer };
+
+    const pitchersFaltantesLista = Array.from(pitchersFaltantesMapa.entries())
+      .map(([id, v]) => ({ id, nombre: v.nombre || "N/C", juegos: v.juegos }));
+
+    const html = `
+      <div class="bloque">
+        <div class="titulo">Conteos reales de la auditoría</div>
+        <div class="meta">Con gameDate oficial: <b>${conGameDateOficial}</b> / ${filasTotales}</div>
+        <div class="meta">Con timezone confirmado: <b>${conTimezone}</b> / ${filasTotales}</div>
+        <div class="meta">Con fecha local coincidente: <b>${conFechaCoincidente}</b> / ${filasTotales}</div>
+        <div class="meta ${conHoraLocal === filasTotales ? 'ok' : 'bad'}">Con hora local real: <b>${conHoraLocal}</b> / ${filasTotales}</div>
+        <div class="meta">Pitcher away confirmado: <b>${conAwayConfirmado}</b> / ${filasTotales}</div>
+        <div class="meta">Pitcher home confirmado: <b>${conHomeConfirmado}</b> / ${filasTotales}</div>
+        <div class="meta ${conAmbosConfirmados === filasTotales ? 'ok' : 'bad'}">Ambos abridores confirmados: <b>${conAmbosConfirmados}</b> / ${filasTotales}</div>
+        <div class="meta">Perfil away encontrado en master: <b>${conPerfilAway}</b></div>
+        <div class="meta">Perfil home encontrado en master: <b>${conPerfilHome}</b></div>
+        <div class="meta">Perfil completo de ambos: <b>${conPerfilAmbos}</b></div>
+        <div class="meta">Pitchers únicos faltantes en master: <b>${pitchersFaltantesLista.length}</b></div>
+        <div class="meta">Filas afectadas por perfiles faltantes: <b>${filasAfectadasPorPerfilFaltante}</b></div>
+        <div class="meta ${juegosNoEncontrados === 0 ? 'ok' : 'bad'}">Juegos no encontrados en schedule: <b>${juegosNoEncontrados}</b></div>
+        <div class="meta ${erroresRed === 0 ? 'ok' : 'bad'}">Errores de red (tras agotar reintentos): <b>${erroresRed}</b></div>
+        <div class="meta ${conflictosFecha === 0 ? 'ok' : 'bad'}">CONFLICTO_FECHA: <b>${conflictosFecha}</b></div>
+        <div class="meta ${conflictosParque === 0 ? 'ok' : 'bad'}">CONFLICTO_PARQUE (o sin poder canonizar): <b>${conflictosParque}</b></div>
+        <div class="meta ${sinTimezone === 0 ? 'ok' : 'bad'}">Sin timezone de venue: <b>${sinTimezone}</b></div>
+        <div class="meta">Filas YA_ENRIQUECIDA_COINCIDENTE (no se tocarán): <b>${yaEnriquecidasCoincidentes}</b></div>
+        <div class="meta ${conflictosEnriquecimientoExistente === 0 ? 'ok' : 'bad'}">CONFLICTO_ENRIQUECIMIENTO_EXISTENTE: <b>${conflictosEnriquecimientoExistente}</b></div>
+        <div class="meta" style="margin-top:8px">${puedeEnriquecer
+          ? '<span class="ok">TODAS las condiciones de la Fase 2 se cumplen. Botón habilitado.</span>'
+          : '<span class="bad">La Fase 2 permanece BLOQUEADA — revisar anomalías abajo.</span>'}</div>
+      </div>
+      <div class="bloque">
+        <div class="titulo">Filas con anomalías (${anomalias.length})</div>
+        ${anomalias.length ? `
+          <table class="tabla">
+            <tr><th>índice</th><th>gamePk</th><th>date</th><th>hora</th><th>parque</th><th>picheo</th><th>enriq. previo</th><th>detalle</th></tr>
+            ${anomalias.map(a => `<tr><td>${a.indice}</td><td>${a.gamePk}</td><td>${a.date}</td><td>${a.estadoHora}</td><td>${a.estadoParque}</td><td>${a.estadoPicheo}</td><td>${a.estadoEnriquecimientoPrevio}</td><td>${a.detalle}</td></tr>`).join("")}
+          </table>
+        ` : `<div class="meta ok">Ninguna.</div>`}
+      </div>
+      <div class="bloque">
+        <div class="titulo">Pitchers faltantes en PITCHERS_MASTER_2026 (${pitchersFaltantesLista.length})</div>
+        ${pitchersFaltantesLista.length ? `
+          <table class="tabla">
+            <tr><th>ID</th><th>nombre</th><th>juegos afectados</th></tr>
+            ${pitchersFaltantesLista.map(p => `<tr><td>${p.id}</td><td>${p.nombre}</td><td>${p.juegos}</td></tr>`).join("")}
+          </table>
+        ` : `<div class="meta ok">Ninguno.</div>`}
+      </div>
+    `;
+    agregar(html);
+    document.getElementById("btnEnriquecer").disabled = !puedeEnriquecer;
+    setEstado("Fase 1 completa. " + (puedeEnriquecer ? "Fase 2 habilitada." : "Fase 2 bloqueada — ver anomalías."));
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 1: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+
+/* ============================================================
+   FASE 2 — enriquecimiento controlado (escribe, con verificación
+   de firma completa, campos protegidos, y sin sobrescribir
+   enriquecimiento previo)
+   ============================================================ */
+function fase2_enriquecer() {
+  try {
+    if (!ULTIMA_AUDITORIA || !ULTIMA_AUDITORIA.puedeEnriquecer) {
+      setEstado("La Fase 1 no dejó las condiciones cumplidas para enriquecer.");
+      return;
+    }
+    const CORE = window.MLBPRO_CORE;
+    const filasActuales = CORE.leerHistoricoCache();
+
+    if (!Array.isArray(filasActuales) || filasActuales.length !== ULTIMA_AUDITORIA.filasTotalesAlAuditar) {
+      render(`<div class="bloque"><div class="titulo bad">ENRIQUECIMIENTO DETENIDO</div>
+        <div class="meta">El tamaño del caché cambió desde la Fase 1. Corre la Fase 1 de nuevo.</div></div>`);
+      setEstado("Detenido: tamaño de caché distinto.");
+      document.getElementById("btnEnriquecer").disabled = true;
+      return;
+    }
+
+    const fallos = [];
+    ULTIMA_AUDITORIA.snapshotFirmas.forEach((firmaEsperada, indice) => {
+      const filaActual = filasActuales[indice];
+      const firmaActual = JSON.stringify(filaActual);
+      if (firmaActual !== firmaEsperada) fallos.push({ indice, gamePk: filaActual && filaActual.gamePk });
+    });
+
+    if (fallos.length > 0) {
+      render(`<div class="bloque"><div class="titulo bad">ENRIQUECIMIENTO DETENIDO — FIRMA DISTINTA</div>
+        <div class="meta">${fallos.length} fila(s) cambiaron desde la Fase 1. No se escribe nada. Corre la Fase 1 de nuevo.</div>
+        <table class="tabla"><tr><th>índice</th><th>gamePk</th></tr>${fallos.map(f => `<tr><td>${f.indice}</td><td>${f.gamePk}</td></tr>`).join("")}</table>
+      </div>`);
+      setEstado("Detenido: " + fallos.length + " fila(s) con firma distinta.");
+      document.getElementById("btnEnriquecer").disabled = true;
+      return;
+    }
+
+    const total = filasActuales.length;
+    const aTocar = ULTIMA_AUDITORIA.enriquecidas.filter(e => e.estadoEnriquecimientoPrevio !== "YA_ENRIQUECIDA_COINCIDENTE").length;
+    const confirmado = confirm(
+      "Verificación de firma OK en las " + total + " filas.\n\n" +
+      "Se van a AGREGAR campos nuevos en " + aTocar + " fila(s) (" + (total - aTocar) + " ya estaban enriquecidas de forma idéntica y no se tocan).\n" +
+      "No se borra ni sobrescribe ningún campo existente.\n" +
+      "¿Continuar y escribir en localStorage vía CORE.guardarHistoricoCache()?"
+    );
+    if (!confirmado) { setEstado("Enriquecimiento cancelado por el usuario."); return; }
+
+    const mapaEnriquecidas = new Map(ULTIMA_AUDITORIA.enriquecidas.map(e => [e.indice, e]));
+
+    const filasNuevas = filasActuales.map((filaVieja, indice) => {
+      const entry = mapaEnriquecidas.get(indice);
+      if (!entry || entry.estadoEnriquecimientoPrevio === "YA_ENRIQUECIDA_COINCIDENTE") {
+        return filaVieja; // no tocar: ya coincide exactamente con lo auditado
+      }
+      return { ...filaVieja, ...entry.camposNuevos };
+    });
+
+    // Verificación de campos protegidos ANTES de guardar.
+    const violacionesProtegidos = [];
+    filasActuales.forEach((filaVieja, indice) => {
+      const filaNueva = filasNuevas[indice];
+      CAMPOS_PROTEGIDOS.forEach(campo => {
+        if (JSON.stringify(filaVieja[campo]) !== JSON.stringify(filaNueva[campo])) {
+          violacionesProtegidos.push({ indice, campo });
+        }
+      });
+    });
+
+    if (violacionesProtegidos.length > 0) {
+      render(`<div class="bloque"><div class="titulo bad">ENRIQUECIMIENTO ABORTADO — CAMPO PROTEGIDO ALTERADO</div>
+        <div class="meta">${violacionesProtegidos.length} violación(es) detectada(s) ANTES de guardar. No se escribió nada.</div>
+        <table class="tabla"><tr><th>índice</th><th>campo</th></tr>${violacionesProtegidos.map(v => `<tr><td>${v.indice}</td><td>${v.campo}</td></tr>`).join("")}</table>
+      </div>`);
+      setEstado("ABORTADO antes de guardar: campos protegidos habrían cambiado.");
+      return;
+    }
+
+    CORE.guardarHistoricoCache(filasNuevas);
+    // guardarHistoricoCache() no devuelve valor (mlbpro-core.js, revisado):
+    // la única confirmación honesta es releer ahora mismo.
+
+    const filasTrasGuardar = CORE.leerHistoricoCache();
+
+    const conteoPost = new Map();
+    filasTrasGuardar.forEach(f => {
+      if (!f || f.gamePk == null) return;
+      const k = String(f.gamePk);
+      conteoPost.set(k, (conteoPost.get(k) || 0) + 1);
+    });
+    const gamePksUnicosPost = conteoPost.size;
+    const duplicadosPost = Array.from(conteoPost.values()).filter(n => n > 1).length;
+    const conHoraPost = filasTrasGuardar.filter(f => f.estadoEnriquecimientoHora === "OK").length;
+    const conAmbosPost = filasTrasGuardar.filter(f => f.pitcherAwayId != null && f.pitcherHomeId != null).length;
+
+    let protegidosIntactosPost = true;
+    const problemasPost = [];
+    filasTrasGuardar.forEach((filaNueva, indice) => {
+      const firmaVieja = ULTIMA_AUDITORIA.snapshotFirmas.get(indice);
+      if (!firmaVieja) return;
+      const filaVieja = JSON.parse(firmaVieja);
+      CAMPOS_PROTEGIDOS.forEach(campo => {
+        if (JSON.stringify(filaVieja[campo]) !== JSON.stringify(filaNueva[campo])) {
+          protegidosIntactosPost = false;
+          problemasPost.push({ indice, campo });
+        }
+      });
+    });
+
+    const resultadoOK =
+      filasTrasGuardar.length === total &&
+      gamePksUnicosPost === total &&
+      duplicadosPost === 0 &&
+      conHoraPost === total &&
+      conAmbosPost === total &&
+      protegidosIntactosPost;
+
+    agregar(`
+      <div class="bloque">
+        <div class="titulo">Fase 2 — Resultado real tras guardar</div>
+        <div class="meta ${filasTrasGuardar.length === total ? 'ok' : 'bad'}">Filas totales: <b>${filasTrasGuardar.length}</b></div>
+        <div class="meta ${gamePksUnicosPost === total ? 'ok' : 'bad'}">gamePk únicos: <b>${gamePksUnicosPost}</b></div>
+        <div class="meta ${duplicadosPost === 0 ? 'ok' : 'bad'}">Duplicados: <b>${duplicadosPost}</b></div>
+        <div class="meta ${conHoraPost === total ? 'ok' : 'bad'}">Filas con hora real: <b>${conHoraPost}</b></div>
+        <div class="meta ${conAmbosPost === total ? 'ok' : 'bad'}">Filas con ambos abridores oficiales: <b>${conAmbosPost}</b></div>
+        <div class="meta ${protegidosIntactosPost ? 'ok' : 'bad'}">Campos protegidos intactos en todas las filas: <b>${protegidosIntactosPost ? "SÍ" : "NO — " + problemasPost.length + " violación(es)"}</b></div>
+        <div class="small">Referencia informativa (esperado por Perez): 1,525 / 1,525 / 0 / 1,525 / 1,525.</div>
+        ${resultadoOK
+          ? `<div class="meta ok" style="margin-top:8px"><b>ENRIQUECIMIENTO CERRADO CORRECTAMENTE.</b></div>`
+          : `<div class="meta bad" style="margin-top:8px"><b>ERROR: EL RESULTADO NO CUMPLE LAS CONDICIONES.</b> No se declara cerrado. Revisar manualmente antes de continuar.</div>`}
+        ${problemasPost.length ? `<table class="tabla"><tr><th>índice</th><th>campo</th></tr>${problemasPost.map(p => `<tr><td>${p.indice}</td><td>${p.campo}</td></tr>`).join("")}</table>` : ""}
+      </div>
+    `);
+    document.getElementById("btnEnriquecer").disabled = true;
+    ULTIMA_AUDITORIA = null;
+    setEstado((resultadoOK ? "Enriquecimiento CERRADO. " : "Enriquecimiento con ERROR — no cerrado. ") + filasTrasGuardar.length + " filas.");
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 2: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
