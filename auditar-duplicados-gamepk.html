@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MLBPro · Auditoría de gamePk duplicados</title>
+<style>
+body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:18px;color:#f5c518;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin-bottom:14px}
+button{width:100%;padding:14px;margin:6px 0;font-size:14px;font-weight:800;color:#000;background:#f5c518;border:none;border-radius:12px}
+#estado{margin:12px 0;font-size:13px;color:#9ad}
+.bloque{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+.titulo{font-size:15px;font-weight:800;color:#fff;margin-bottom:8px}
+.meta{font-size:13px;color:#ddd;margin:4px 0}
+.ok{color:#32d74b;font-weight:800}
+.mid{color:#ffd60a;font-weight:800}
+.bad{color:#ff453a;font-weight:800}
+.small{font-size:12px;color:#aaa;margin-top:5px}
+.tabla{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.tabla th,.tabla td{border:1px solid #222;padding:5px;text-align:left;color:#ccc;vertical-align:top}
+.tabla th{background:#151515;color:#f5c518}
+pre{background:#050505;border:1px solid #222;border-radius:8px;padding:10px;overflow-x:auto;font-size:11px;color:#ccc;white-space:pre-wrap;word-break:break-word}
+details{margin-top:8px;border-top:1px solid #222;padding-top:8px}
+summary{cursor:pointer;font-weight:800;color:#79c0ff}
+</style>
+</head>
+<body>
+<h1>MLBPro · Auditoría de gamePk duplicados</h1>
+<div class="sub">Solo lectura · usa CORE.leerHistoricoCache() · no modifica, borra ni reescribe ninguna caché</div>
+
+<button onclick="auditarDuplicados()">AUDITAR gamePk DUPLICADOS EN DATA MADRE</button>
+
+<div id="estado">Listo.</div>
+<div id="reporte"></div>
+
+<script src="estadios.js"></script>
+<script src="mlbpro-core.js"></script>
+
+<script>
+/* ============================================================
+   PRÓLOGO — auditar-duplicados-gamepk.html
+   ============================================================
+   QUÉ ES:
+     Herramienta standalone de SOLO LECTURA. Su único propósito es
+     auditar, con evidencia real, los gamePk duplicados detectados
+     en el histórico Data Madre (MLBPRO_DATA_MADRE_HIST_2026_V1) —
+     la auditoría previa (auditoria-clima-match.html, Fase 1) ya
+     midió que existen 13 gamePk duplicados equivalentes a 26 filas.
+     Este archivo no repite ese conteo desde cero con un número fijo:
+     lee el caché real en el momento de ejecutar y encuentra los
+     duplicados que existan en esa lectura, sean 13 o cualquier otro
+     número — no depende de la cifra ya reportada.
+
+   FUENTE QUE LEE:
+     CORE.leerHistoricoCache() — la misma función pública que usa
+     index.html (jalarHistorico2026, calcularCoincidencia,
+     generarConclusionCoincidencia) para leer el histórico desde
+     localStorage. No se lee localStorage directamente por clave:
+     se usa la función oficial de mlbpro-core.js, que ya está
+     CONGELADO y no se modifica aquí ni en ningún otro lado.
+
+   QUÉ MIDE Y MUESTRA:
+     - Filas totales en el caché (longitud real del array devuelto
+       por CORE.leerHistoricoCache()).
+     - gamePk únicos (tamaño del Set de gamePk, sin contar
+       duplicados dos veces).
+     - La lista completa de gamePk duplicados (cualquier gamePk que
+       aparezca más de una vez en el array).
+     - Cuántas veces aparece cada uno.
+     - El índice exacto (posición en el array tal como lo devuelve
+       el caché) de cada copia de cada fila duplicada.
+     - Si las copias de un mismo gamePk son IDÉNTICAS (mismo
+       contenido en todos los campos) o tienen CONFLICTO (al menos
+       un campo distinto entre copias).
+     - Cuando hay conflicto, la lista exacta de qué campos difieren
+       y el valor que trae cada copia en ese campo.
+     - El JSON completo de cada fila duplicada, tal cual está
+       guardada, para inspección manual directa.
+
+   CÓMO SE COMPARA "IDÉNTICA" VS "CONFLICTO":
+     Se comparan las copias de un mismo gamePk campo por campo,
+     usando JSON.stringify() sobre cada valor individual (así
+     también compara correctamente objetos anidados como
+     trayectoriaViento, que no se puede comparar con === directo).
+     Si TODOS los campos coinciden entre TODAS las copias, se marca
+     IDÉNTICA. Si al menos un campo difiere en al menos una copia,
+     se marca CONFLICTO y se listan exactamente cuáles campos y qué
+     trae cada copia — nunca se asume cuál copia es la "correcta":
+     eso queda para que Perez lo decida con la evidencia mostrada.
+
+   QUÉ NO HACE ESTA HERRAMIENTA:
+     No llama a guardarHistoricoCache() ni a ninguna función que
+     escriba. No borra filas duplicadas. No decide cuál copia
+     conservar. No toca index.html, mlbpro-core.js (solo lo carga
+     como script para usar su función pública de lectura), F5,
+     Coincidencia, trayectoria de viento ni brújula. Es
+     exclusivamente instrumento de auditoría manual.
+
+   ESTADO:
+     Recién creada. No se ha corrido todavía — los duplicados reales,
+     sus índices y si son copias idénticas o con conflicto quedan
+     pendientes de que Perez la ejecute.
+
+   FECHA:
+     22 jul 2026.
+   ============================================================ */
+
+function setEstado(t) { document.getElementById("estado").textContent = t; }
+function render(html) { document.getElementById("reporte").innerHTML = html; }
+
+function esObjetoPlano(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+// Compara dos filas campo por campo (unión de todas las claves de ambas,
+// por si una copia tiene un campo que la otra no tiene). Usa
+// JSON.stringify por campo para poder comparar valores anidados
+// (ej. trayectoriaViento) sin falsos negativos por referencia de objeto.
+function compararFilas(filaA, filaB) {
+  const clavesA = Object.keys(filaA || {});
+  const clavesB = Object.keys(filaB || {});
+  const todasLasClaves = Array.from(new Set(clavesA.concat(clavesB)));
+
+  const diferencias = [];
+  todasLasClaves.forEach(campo => {
+    const valA = filaA ? filaA[campo] : undefined;
+    const valB = filaB ? filaB[campo] : undefined;
+    const strA = JSON.stringify(valA);
+    const strB = JSON.stringify(valB);
+    if (strA !== strB) {
+      diferencias.push({ campo: campo, valorA: valA, valorB: valB });
+    }
+  });
+  return diferencias;
+}
+
+function auditarDuplicados() {
+  try {
+    setEstado("Leyendo histórico via CORE.leerHistoricoCache()...");
+    render("");
+
+    if (typeof window.MLBPRO_CORE === "undefined" || typeof window.MLBPRO_CORE.leerHistoricoCache !== "function") {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div>
+        <div class="meta">window.MLBPRO_CORE.leerHistoricoCache no está disponible. Verificar que mlbpro-core.js (y estadios.js) estén cargando correctamente junto a este archivo.</div></div>`);
+      setEstado("Detenido: CORE no disponible.");
+      return;
+    }
+
+    const CORE = window.MLBPRO_CORE;
+    const filas = CORE.leerHistoricoCache(); // array real, tamaño no asumido
+
+    if (!Array.isArray(filas)) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div>
+        <div class="meta">CORE.leerHistoricoCache() no devolvió un array.</div></div>`);
+      setEstado("Detenido: caché no es un array.");
+      return;
+    }
+
+    const filasTotales = filas.length;
+
+    // --- índice: gamePk -> lista de { indice, fila } ---
+    const porGamePk = new Map();
+    filas.forEach((fila, indice) => {
+      if (!fila || fila.gamePk == null) return;
+      const k = String(fila.gamePk);
+      if (!porGamePk.has(k)) porGamePk.set(k, []);
+      porGamePk.get(k).push({ indice, fila });
+    });
+
+    const gamePksUnicos = porGamePk.size;
+    const duplicados = Array.from(porGamePk.entries()).filter(([, arr]) => arr.length > 1);
+
+    let html = `
+      <div class="bloque">
+        <div class="titulo">Resumen</div>
+        <div class="meta">Filas totales en el caché (leídas ahora): <b>${filasTotales}</b></div>
+        <div class="meta">gamePk únicos: <b>${gamePksUnicos}</b></div>
+        <div class="meta ${duplicados.length === 0 ? 'ok' : 'bad'}">gamePk duplicados encontrados: <b>${duplicados.length}</b></div>
+        <div class="meta">Filas que representan esos duplicados: <b>${duplicados.reduce((s, [, arr]) => s + arr.length, 0)}</b></div>
+      </div>
+    `;
+
+    if (!duplicados.length) {
+      html += `<div class="bloque"><div class="meta ok">No se encontró ningún gamePk duplicado en esta lectura del caché.</div></div>`;
+      render(html);
+      setEstado("Auditoría completa. Sin duplicados.");
+      return;
+    }
+
+    html += `
+      <div class="bloque">
+        <div class="titulo">Tabla de duplicados</div>
+        <table class="tabla">
+          <tr><th>gamePk</th><th>veces</th><th>índices en caché</th><th>veredicto</th></tr>
+          ${duplicados.map(([gamePk, copias]) => {
+            let todasIguales = true;
+            for (let i = 1; i < copias.length; i++) {
+              const dif = compararFilas(copias[0].fila, copias[i].fila);
+              if (dif.length) { todasIguales = false; break; }
+            }
+            return `
+              <tr>
+                <td>${gamePk}</td>
+                <td>${copias.length}</td>
+                <td>${copias.map(c => c.indice).join(", ")}</td>
+                <td class="${todasIguales ? 'ok' : 'bad'}">${todasIguales ? "IDÉNTICAS" : "CONFLICTO"}</td>
+              </tr>
+            `;
+          }).join("")}
+        </table>
+      </div>
+    `;
+
+    // --- detalle por gamePk duplicado ---
+    duplicados.forEach(([gamePk, copias]) => {
+      const primera = copias[0].fila;
+      let esIdentica = true;
+      const diferenciasPorPar = [];
+
+      for (let i = 1; i < copias.length; i++) {
+        const dif = compararFilas(primera, copias[i].fila);
+        if (dif.length) {
+          esIdentica = false;
+          diferenciasPorPar.push({ contraCopiaIndice: copias[i].indice, diferencias: dif });
+        }
+      }
+
+      html += `
+        <div class="bloque">
+          <div class="titulo">gamePk ${gamePk} — ${copias.length} copia(s), índices: ${copias.map(c => c.indice).join(", ")}</div>
+          <div class="meta ${esIdentica ? 'ok' : 'bad'}">Veredicto: <b>${esIdentica ? "COPIAS IDÉNTICAS (todos los campos coinciden)" : "CONFLICTO (al menos un campo difiere entre copias)"}</b></div>
+      `;
+
+      if (!esIdentica) {
+        html += `<div class="meta"><b>Campos con diferencia (comparando la copia en el índice ${copias[0].indice} contra las demás):</b></div>`;
+        diferenciasPorPar.forEach(par => {
+          html += `
+            <div class="small" style="margin:6px 0;padding:6px;background:#111;border-radius:6px">
+              vs índice ${par.contraCopiaIndice}:
+              <table class="tabla" style="margin-top:4px">
+                <tr><th>campo</th><th>índice ${copias[0].indice}</th><th>índice ${par.contraCopiaIndice}</th></tr>
+                ${par.diferencias.map(d => `
+                  <tr>
+                    <td>${d.campo}</td>
+                    <td>${JSON.stringify(d.valorA)}</td>
+                    <td>${JSON.stringify(d.valorB)}</td>
+                  </tr>
+                `).join("")}
+              </table>
+            </div>
+          `;
+        });
+      }
+
+      html += `
+          <details>
+            <summary>Ver JSON completo de cada copia</summary>
+            ${copias.map(c => `
+              <div class="small"><b>Índice ${c.indice}:</b></div>
+              <pre>${JSON.stringify(c.fila, null, 2)}</pre>
+            `).join("")}
+          </details>
+        </div>
+      `;
+    });
+
+    render(html);
+    setEstado("Auditoría completa. " + duplicados.length + " gamePk duplicado(s) de " + gamePksUnicos + " únicos (" + filasTotales + " filas totales).");
+  } catch (e) {
+    setEstado("ERROR REAL: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
