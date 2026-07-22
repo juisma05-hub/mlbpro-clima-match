@@ -57,74 +57,89 @@ button:disabled{opacity:.5}
    PRÓLOGO — index.html (script inline)
    ============================================================
    QUÉ ES:
-     Pantalla principal. Jala juegos de hoy + clima, construye/lee el
-     histórico 2026 (incluyendo trayectoriaViento por fila), calcula
-     coincidencia climática, arma la conclusión con veredicto de
-     mercados y brújula, y ofrece una prueba corta de solo lectura para
-     auditar la trayectoria de viento por zona horaria. Enlaza además a
-     auditar-trayectoria-historico.html, página separada de solo
-     lectura para inspeccionar el histórico completo ya guardado.
+     Pantalla principal. Jala juegos de hoy con clima puntual de
+     PRONÓSTICO (hora real del juego) + trayectoria de viento de
+     pronóstico, construye/lee el histórico 2026 (con trayectoriaViento
+     por fila), calcula coincidencia climática, arma la conclusión con
+     veredicto de mercados y brújula, y ofrece una prueba corta de solo
+     lectura para auditar la trayectoria de viento histórica por zona
+     horaria. Enlaza además a auditar-trayectoria-historico.html,
+     página separada de solo lectura para inspeccionar el histórico
+     completo ya guardado.
 
    ORDEN DE CARGA (no cambiar):
      1. estadios.js  2. parques-orientacion.js  3. mlbpro-core.js
      4. roof-status.js  5. mlbpro-viento.js  6. confidence-panel.js
      7. game-cards.js  8. mlb-climate-match.js  9. este script inline
 
-   mlbpro-core.js: CONGELADO — no se tocó ni una línea.
+   mlbpro-core.js: CONGELADO — no se tocó ni una línea. Ya contiene y
+   exporta CORE.getClimaPronosticoJuego() y
+   CORE.getTrayectoriaVientoPronostico(), usadas en esta pasada.
    auditar-trayectoria-historico.html: CONGELADA — no se tocó.
 
-   INTEGRACIÓN DE TRAYECTORIA DE VIENTO EN jalarHistorico2026():
-   - Por cada juego que YA tenga parque válido, coordenadas válidas,
-     clima histórico válido (CORE.getClimaHistorico) y boxscore válido
-     (CORE.getBoxScore) — exactamente el mismo gate que ya existía para
-     guardar una fila — se llama ADEMÁS a
-     CORE.getTrayectoriaVientoHistorico(coords.lat, coords.lon,
-     g.gameDate, nombreParque), en su PROPIO try/catch, independiente
-     de todo lo demás. El resultado (objeto o null) se guarda tal cual
-     en el campo trayectoriaViento de la fila.
-   - Si getTrayectoriaVientoHistorico() falla o devuelve null, la fila
-     NO se descarta ni se salta: se guarda con trayectoriaViento: null.
-     La falta de trayectoria nunca elimina una fila que ya tiene clima
-     y boxscore reales — esos dos siguen siendo el único gate real
-     para que una fila entre al histórico.
-   - Contadores nuevos, separados de "saltados" (que sigue significando
-     exactamente lo mismo de antes: juego no Final, sin parque, sin
-     coordenadas, sin clima o sin boxscore): trayectoriasConObjeto,
-     brisaEstable, brisaCambiante, direccionNoConfiable, noConfirmado,
-     trayectoriaNull. Se muestran al terminar junto con filas totales,
-     saltados, fecha inicial y fecha final.
-   - DEDUPLICACIÓN: antes de procesar cada juego del día, se verifica
-     contra un Set (gamePksExistentes) construido a partir de todas las
-     filas ya presentes en el cache al arrancar la reconstrucción. Si
-     el gamePk ya existe, el juego se salta sin gastar ninguna llamada
-     de red y sin duplicarse. Cada fila nueva agrega su propio gamePk
-     al Set apenas se guarda, para que la MISMA corrida tampoco pueda
-     duplicarlo.
-   - Se mantienen intactos todos los campos históricos que ya existían:
-     gamePk, date, away, home, venue, venueId, roof, lat, lon, tempF,
-     humidity, precip, windMph, windDir, timezoneUsado,
-     horaLocalObjetivo, horaClimaUtilizada, awayRuns, homeRuns,
-     totalRuns, awayKs, homeKs, totalKs, awayHRs, homeHRs, totalHRs.
-   - NO se tocó calcularCoincidencia(), generarConclusionCoincidencia(),
-     evaluarMercados(), renderBrujula(), jalarJuegosHoy(),
-     borrarCacheHistorico() ni probarTrayectoriaViento().
+   HISTÓRICO 2026 — CERRADO Y APROBADO:
+     1,511 filas totales. 1,511/1,511 con trayectoriaViento (0 null).
+     Clasificación: 911 BRISA_ESTABLE · 207 BRISA_CAMBIANTE ·
+     393 DIRECCION_NO_CONFIABLE · 0 NO_CONFIRMADO.
+     BRISA_RANGO_GRADOS = 30: vigente y aprobado.
+     jalarHistorico2026() no se tocó en esta pasada.
 
-   ESTADO:
-     Zona horaria/fecha local del histórico → PROBADO Y APROBADO
-     (1,520 filas, 4/4 zonas PASS). Trayectoria de viento (offsets,
-     clasificación, viento casi calmo) → lógica aprobada por Perez en
-     mlbpro-core.js. La auditoría confirmó que las 1,527 filas
-     reconstruidas previamente NO tienen trayectoriaViento (se hizo con
-     un index.html anterior a esta integración) — 0 filas con el campo.
-     Este es el index.html correcto para volver a reconstruir: requiere
-     BORRAR CACHE HISTÓRICO primero (para forzar reconstrucción
-     completa desde CORE.START_HIST) y luego JALAR HISTÓRICO 2026.
-     Nada de esto queda declarado aprobado hasta que Perez lo corra y
-     confirme los contadores + audite el resultado en
-     auditar-trayectoria-historico.html.
+   PRONÓSTICO PUNTUAL + TRAYECTORIA EN jalarJuegosHoy() (ESTA PASADA):
+   - Para cada juego, la obtención de venue completo y coordenadas
+     (CORE.getVenueFull / CORE.coordsFromVenue) vive en su PROPIO
+     try/catch, por juego. Si falla, ese juego queda con
+     g.trayectoriaViento = null, sin entrada en climaHoy, la tarjeta
+     muestra clima y trayectoria no confirmados, y el bucle continúa
+     con el siguiente juego sin caer en el catch general. Un fallo de
+     venue o coordenadas de un juego nunca detiene a los demás.
+   - Cuando hay coordenadas válidas, se definen nombreParque
+     (g.venue?.name || venueFull?.name) y gameDate (g.gameDate), y se
+     llaman POR SEPARADO, cada una en su propio try/catch,
+     independientes entre sí:
+       1. CORE.getClimaPronosticoJuego(coords.lat, coords.lon,
+          g.gameDate, nombreParque) — reemplaza a
+          CORE.getClimaActual() para juegos de hoy. El clima ahora
+          corresponde a la hora real de inicio del juego, no al clima
+          actual del momento de la consulta.
+       2. CORE.getTrayectoriaVientoPronostico(coords.lat, coords.lon,
+          g.gameDate, nombreParque).
+   - Si falla el clima puntual, la trayectoria no se borra. Si falla
+     la trayectoria, el clima puntual no se borra. Ningún dato
+     faltante se convierte en cero: se muestra N/C o NO CONFIRMADO.
+   - g.trayectoriaViento = trayectoria || null se guarda en cada juego
+     de juegosHoy. Cuando hay clima puntual confirmado,
+     climaHoy[g.gamePk] conserva todos los campos que ya tenía y
+     agrega trayectoriaViento: trayectoria || null. El contrato
+     existente de climaHoy no cambió.
+   - cardJuegoHoy() ahora también muestra, cuando existe trayectoria:
+     clasificación, dirección inicio (offset 0), dirección final
+     (offset +4), velocidad mín/máx/prom, y los 7 puntos
+     [-2,-1,0,+1,+2,+3,+4] con offset, claveLocalUsada, windFromDeg,
+     windToDeg, windMph y direccionConfiable. Si trayectoriaViento es
+     null, se muestra "Trayectoria de viento no confirmada".
+
+   NO TOCADO EN ESTA PASADA:
+     calcularCoincidencia(), generarConclusionCoincidencia(),
+     evaluarMercados(), renderBrujula(), jalarHistorico2026(),
+     mlbpro-core.js, auditar-trayectoria-historico.html, K6, F5,
+     Moneyline, Over/Under, Aladino, ningún otro archivo. Coincidencia
+     todavía no está conectada a trayectoria de viento.
+
+   PRUEBA DE TRAYECTORIA (histórica, por zona horaria):
+     Rango angular: ±30° (APROBADO). Velocidad mínima para confiar en
+     dirección según lo calculado por mlbpro-core.js / mlbpro-viento.js.
+
+   ESTADO FINAL:
+     Histórico: cerrado y aprobado.
+     Pronóstico puntual y trayectoria: conectados únicamente a juegos
+     de hoy. Fallo de venue/coordenadas por juego ya no detiene a los
+     demás juegos.
+     Pendiente: probar en navegador, revisar consola y confirmar que
+     ningún null aparece como cero.
+     Coincidencia: todavía sin conectar a trayectoria.
 
    FECHA:
-     21 jul 2026.
+     22 jul 2026.
    ============================================================ */
 const CORE = window.MLBPRO_CORE;
 const VIENTO = window.MLBPRO_VIENTO;
@@ -144,10 +159,52 @@ function esNumeroReal(v) {
 }
 function safe(x) { return esNumeroReal(x) ? Number(x) : "NO"; }
 
+function claseClasificacionHoy(c) {
+  if (c === "BRISA_ESTABLE") return "ok";
+  if (c === "BRISA_CAMBIANTE") return "bad";
+  if (c === "DIRECCION_NO_CONFIABLE") return "mid";
+  return "mid";
+}
+
+function bloqueTrayectoriaHoy(t) {
+  if (!t) {
+    return `<div class="bad">Trayectoria de viento no confirmada</div>`;
+  }
+  const cls = claseClasificacionHoy(t.clasificacion);
+  const puntos = Array.isArray(t.puntos) ? t.puntos : [];
+
+  return `
+    <div class="match">
+      <div class="meta"><b>Clasificación:</b> <span class="${cls}">${t.clasificacion ?? "NO CONFIRMADO"}</span></div>
+      <div class="meta"><b>Dirección inicio (offset 0):</b> ${esNumeroReal(t.direccionInicio) ? t.direccionInicio + "°" : "N/C"}</div>
+      <div class="meta"><b>Dirección final (offset +4):</b> ${esNumeroReal(t.direccionFinal) ? t.direccionFinal + "°" : "N/C"}</div>
+      <div class="meta"><b>Velocidad mínima:</b> ${esNumeroReal(t.velocidadMin) ? t.velocidadMin + " mph" : "N/C"}</div>
+      <div class="meta"><b>Velocidad máxima:</b> ${esNumeroReal(t.velocidadMax) ? t.velocidadMax + " mph" : "N/C"}</div>
+      <div class="meta"><b>Velocidad promedio:</b> ${esNumeroReal(t.velocidadProm) ? t.velocidadProm + " mph" : "N/C"}</div>
+      ${puntos.length ? `
+        <details class="hist" style="cursor:pointer">
+          <summary style="cursor:pointer;font-weight:800">Recorrido de la brisa durante el juego (7 puntos)</summary>
+          ${puntos.map(p => `
+            <div class="small">
+              offset ${esNumeroReal(p.offsetHoras) ? (p.offsetHoras >= 0 ? "+" + p.offsetHoras : p.offsetHoras) + "h" : "N/C"} ·
+              clave ${p.claveLocalUsada ?? "N/C"} ·
+              viene de ${esNumeroReal(p.windFromDeg) ? p.windFromDeg + "°" : "N/C"} ·
+              va hacia ${esNumeroReal(p.windToDeg) ? p.windToDeg + "°" : "N/C"} ·
+              ${esNumeroReal(p.windMph) ? p.windMph + " mph" : "N/C"} ·
+              dirección ${p.direccionConfiable === true ? "confiable" : p.direccionConfiable === false ? "NO CONFIABLE" : "NO CONFIRMADO"}
+            </div>
+          `).join("")}
+        </details>
+      ` : `<div class="small">Sin puntos de trayectoria disponibles.</div>`}
+    </div>
+  `;
+}
+
 function cardJuegoHoy(g, c) {
   const away = g.teams?.away?.team?.name || "?";
   const home = g.teams?.home?.team?.name || "?";
   const venue = g.venue?.name || "SIN PARQUE";
+  const trayectoria = g.trayectoriaViento || (c ? c.trayectoriaViento : null) || null;
   return `
     <div class="juego">
       <div class="matchup">${away} @ ${home}</div>
@@ -162,6 +219,8 @@ function cardJuegoHoy(g, c) {
           <div class="meta">Roof: ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.getRoofStatus(venue).label : "NO CONFIRMADO"}</div>
         ` : `<div class="bad">Clima no confirmado</div>`
       }
+      <div class="meta" style="margin-top:6px"><b>Estadio:</b> ${venue}</div>
+      ${bloqueTrayectoriaHoy(trayectoria)}
     </div>
   `;
 }
@@ -177,28 +236,60 @@ async function jalarJuegosHoy() {
 
     for (const g of games) {
       const venueId = g.venue?.id;
+      g.trayectoriaViento = null;
+
       let venueFull = null, coords = null;
 
+      // Obtención de venue + coordenadas EN SU PROPIO try/catch, por
+      // juego. Si falla, este juego se queda con trayectoriaViento
+      // null, sin entrada en climaHoy, y el bucle sigue con el
+      // próximo juego sin caer en el catch general.
       if (venueId) {
-        venueFull = await CORE.getVenueFull(venueId);
-        coords = CORE.coordsFromVenue(venueFull);
+        try {
+          venueFull = await CORE.getVenueFull(venueId);
+          coords = CORE.coordsFromVenue(venueFull);
+        } catch (e) {
+          venueFull = null;
+          coords = null;
+        }
       }
 
       if (coords) {
-        const clima = await CORE.getClimaActual(coords.lat, coords.lon);
-        climaHoy[g.gamePk] = {
-          gamePk: g.gamePk,
-          date: CORE.hoyISO(),
-          gameDate: g.gameDate,
-          away: g.teams?.away?.team?.name || "?",
-          home: g.teams?.home?.team?.name || "?",
-          venue: g.venue?.name || venueFull?.name || "SIN PARQUE",
-          venueId: venueId,
-          roof: venueFull?.roofType || venueFull?.roof || "",
-          lat: coords.lat,
-          lon: coords.lon,
-          ...clima
-        };
+        const nombreParque = g.venue?.name || venueFull?.name;
+        const gameDate = g.gameDate;
+
+        let clima = null;
+        try {
+          clima = await CORE.getClimaPronosticoJuego(coords.lat, coords.lon, gameDate, nombreParque);
+        } catch (e) {
+          clima = null;
+        }
+
+        let trayectoria = null;
+        try {
+          trayectoria = await CORE.getTrayectoriaVientoPronostico(coords.lat, coords.lon, gameDate, nombreParque);
+        } catch (e) {
+          trayectoria = null;
+        }
+
+        g.trayectoriaViento = trayectoria || null;
+
+        if (clima) {
+          climaHoy[g.gamePk] = {
+            gamePk: g.gamePk,
+            date: CORE.hoyISO(),
+            gameDate: g.gameDate,
+            away: g.teams?.away?.team?.name || "?",
+            home: g.teams?.home?.team?.name || "?",
+            venue: g.venue?.name || venueFull?.name || "SIN PARQUE",
+            venueId: venueId,
+            roof: venueFull?.roofType || venueFull?.roof || "",
+            lat: coords.lat,
+            lon: coords.lon,
+            ...clima,
+            trayectoriaViento: trayectoria || null
+          };
+        }
       }
       html += cardJuegoHoy(g, climaHoy[g.gamePk]);
     }
@@ -611,7 +702,7 @@ async function probarTrayectoriaViento(porZona) {
         <div class="meta">ET (incluye Toronto): ${buckets.ET.length}/${porZona} · Central: ${buckets.Central.length}/${porZona} · Mountain/Phoenix-Denver: ${buckets.Mountain.length}/${porZona} · Pacific: ${buckets.Pacific.length}/${porZona}</div>
         <div class="meta">Confirmados totales en cuota: ${totalConfirmados} · Rechazados (NO_CONFIRMADO o sin trayectoria): ${rechazados.length} · Otras zonas fuera de cuota: ${otrasZonas.length}</div>
         <div class="meta">Fase 1 — días escaneados: ${diasEscaneados} · juegos procesados: ${juegosProcesados}</div>
-        <div class="meta bad">Rango angular: ±${rangoUsado}° (NO APROBADO todavía) · Velocidad mínima para confiar en dirección: ${velMinima} mph</div>
+        <div class="meta ok">Rango angular: ±${rangoUsado}° (APROBADO) · Velocidad mínima para confiar en dirección: ${velMinima} mph</div>
         <div class="small">Esto NO guardó nada en el histórico ni en localStorage — es solo para inspeccionar el cálculo.</div>
       </div>
     `;
