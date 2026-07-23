@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLBPro · Carreraje por Viento y Parque</title>
+<style>
+* { box-sizing: border-box; }
+body { background:#000; color:#e8e8e8; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:16px; }
+h1 { font-size:18px; color:#f5c518; margin:0 0 4px; font-weight:900; }
+h2 { font-size:15px; color:#f5c518; margin:22px 0 8px; font-weight:800; }
+.sub { color:#888; font-size:13px; margin-bottom:14px; }
+.aviso { background:#111; border:1px solid #333; border-radius:10px; padding:10px 12px; font-size:12px; color:#9ad; margin-bottom:14px; }
+.aviso.bad { color:#ff8a80; border-color:#5a2323; }
+label { display:block; font-size:12px; color:#aaa; margin:10px 0 4px; font-weight:700; }
+select, button { width:100%; padding:13px; font-size:14px; border-radius:10px; border:1px solid #333; }
+select { background:#0c0c0c; color:#e8e8e8; }
+button { margin-top:14px; font-weight:800; color:#000; background:#f5c518; border:none; cursor:pointer; }
+button:active { transform:scale(0.99); }
+button.secundario { background:#222; color:#e8e8e8; margin-top:6px; }
+.card { background:#0c0c0c; border:1px solid #333; border-radius:12px; padding:14px; margin:10px 0; }
+.card .titulo { font-size:14px; font-weight:800; color:#fff; margin-bottom:6px; }
+.card .metric { font-size:22px; font-weight:900; color:#f5c518; }
+.card .meta { font-size:12px; color:#999; margin-top:4px; }
+table { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; }
+th, td { text-align:left; padding:7px 6px; border-bottom:1px solid #222; }
+th { color:#9ad; font-weight:700; white-space:nowrap; }
+td { color:#ddd; }
+tr:hover td { background:#0f0f0f; }
+.ok { color:#32d74b; font-weight:800; }
+.mid { color:#ffd60a; font-weight:800; }
+.bad { color:#ff453a; font-weight:800; }
+.juego-item { padding:8px 0; border-bottom:1px solid #1c1c1c; font-size:12px; color:#ccc; }
+.juego-item b { color:#fff; }
+details summary { cursor:pointer; font-weight:800; color:#9ad; margin-top:8px; }
+</style>
+</head>
+<body>
+
+<h1>MLBPro · Carreraje por Viento y Parque</h1>
+<div class="sub">Herramienta separada, de solo lectura. No modifica index.html, viento-parque.html, ni el histórico guardado.</div>
+
+<div id="avisoOrigen" class="aviso">Verificando histórico en caché...</div>
+
+<h2>1. Buscador manual</h2>
+<label>Parque</label>
+<select id="selParque"></select>
+
+<label>Rango de velocidad de viento</label>
+<select id="selVelocidad">
+  <option value="0-5">0 – 5 mph</option>
+  <option value="5-8">5 – 8 mph</option>
+  <option value="8-12" selected>8 – 12 mph</option>
+  <option value="13-16">13 – 16 mph</option>
+  <option value="16-999">16+ mph</option>
+  <option value="0-999">Cualquiera</option>
+</select>
+
+<label>Dirección del viento (relativa al parque)</label>
+<select id="selDireccion">
+  <option value="cualquiera">Cualquiera</option>
+  <option value="bateo">Favorece bateo (sale al jardín)</option>
+  <option value="picheo">Favorece picheo (entra a home)</option>
+  <option value="neutral">Neutral / cruzada</option>
+</select>
+
+<button onclick="buscarManual()">BUSCAR EN EL HISTÓRICO</button>
+
+<div id="resultadoManual"></div>
+
+<h2>2. Dashboard agregado (todo el histórico)</h2>
+<div class="sub" style="margin-top:-6px">Promedio de carreras por parque, agrupado por velocidad y dirección de viento. Se genera solo con parques que tengan al menos 3 juegos en el bucket.</div>
+<button class="secundario" onclick="generarDashboard()">GENERAR DASHBOARD</button>
+<div id="dashboard"></div>
+
+<script src="estadios.js"></script>
+<script src="parques-orientacion.js"></script>
+<script src="mlbpro-core.js"></script>
+<script src="roof-status.js"></script>
+<script src="mlbpro-viento.js"></script>
+
+<script>
+/* ============================================================
+   PRÓLOGO — carreraje-viento-dashboard.html
+   ============================================================
+   QUÉ ES:
+     Herramienta NUEVA y SEPARADA. No reemplaza ni modifica index.html,
+     viento-parque.html, mlbpro-core.js, mlbpro-viento.js, estadios.js
+     ni parques-orientacion.js. Ninguno de esos archivos fue tocado
+     para construir esta pantalla.
+
+     Responde una sola pregunta que ningún archivo existente responde
+     directo: "históricamente, ¿cuántas carreras se hacen en el parque
+     X con viento de tal velocidad y dirección?" — sin depender de
+     jalar juegos de hoy ni de la MLB API en vivo.
+
+   DE QUÉ DEPENDE (mismos archivos que ya carga index.html, sin
+   cambiar ninguno):
+     estadios.js            → stadiumCanonName(), stadiumNorm()
+     parques-orientacion.js → getOrientacionParque()
+     mlbpro-core.js         → CORE.leerHistoricoCache() (SOLO LECTURA)
+     roof-status.js         → requerido porque mlbpro-viento.js lo
+                               referencia en tipoBrisa() (no se usa acá
+                               directamente, pero se carga para que
+                               VIENTO no falle si en el futuro se
+                               reusa tipoBrisa()).
+     mlbpro-viento.js       → VIENTO.evaluarViento() para clasificar
+                               bateo/picheo/neutral por parque.
+
+   QUÉ TOCA:
+     Nada de localStorage salvo LECTURA vía CORE.leerHistoricoCache().
+     No escribe, no borra, no llama a ninguna API externa (MLB Stats
+     API u Open-Meteo) — trabaja 100% con lo que ya esté en caché.
+
+   REQUISITO DE ORIGEN:
+     localStorage es por origen (dominio + protocolo). Para que este
+     archivo vea el mismo histórico que index.html, tiene que servirse
+     desde el MISMO dominio/carpeta que index.html (ej. mismo GitHub
+     Pages). Si se abre este archivo desde un origen distinto, el
+     histórico aparecerá vacío — no es un bug, es aislamiento normal
+     del navegador.
+
+   FECHA:
+     23 jul 2026.
+   ============================================================ */
+
+const CORE = window.MLBPRO_CORE;
+const VIENTO = window.MLBPRO_VIENTO;
+
+let historico = [];
+
+function esNumeroReal(v) {
+  if (v === null || v === undefined || v === "") return false;
+  if (typeof v === "boolean") return false;
+  if (typeof v === "string" && v.trim() === "") return false;
+  return Number.isFinite(Number(v));
+}
+
+function claveCanonica(venueCrudo) {
+  if (typeof stadiumCanonName !== "function" || typeof stadiumNorm !== "function") {
+    return venueCrudo || "SIN_PARQUE";
+  }
+  return stadiumNorm(stadiumCanonName(venueCrudo));
+}
+
+// Bucket de velocidad — mismos cortes que viento-parque.html, más un
+// bucket de 0-5 que ese archivo no tenía (útil para brisa muerta).
+function bucketVelocidad(mph) {
+  const m = Number(mph);
+  if (!Number.isFinite(m)) return null;
+  if (m < 5) return "0-5";
+  if (m < 8) return "5-8";
+  if (m < 13) return "8-12";
+  if (m < 16) return "13-16";
+  return "16-999";
+}
+
+// Categoría de dirección relativa al parque, reusando exactamente
+// VIENTO.evaluarViento() + getOrientacionParque() — mismo criterio
+// que index.html y viento-parque.html.
+function categoriaDireccion(venueCrudo, windDir) {
+  const hpACFraw = (typeof getOrientacionParque !== "undefined") ? getOrientacionParque(venueCrudo) : null;
+  const ev = VIENTO.evaluarViento(windDir, hpACFraw);
+  if (ev.favoreceBateo === true) return "bateo";
+  if (ev.favoreceBateo === false) return "picheo";
+  return "neutral"; // incluye NEUTRAL/CRUZADA, DIRECCIÓN NO CONFIRMADA, ORIENTACIÓN NO CONFIRMADA
+}
+
+function promedio(arr) {
+  if (!arr.length) return null;
+  return arr.reduce((s, x) => s + x, 0) / arr.length;
+}
+
+function poblarSelectorParques() {
+  const sel = document.getElementById("selParque");
+  // clave canónica -> { nombresParque: {nombreCrudo: conteo}, equipos: {equipoLocal: conteo} }
+  const vistos = new Map();
+
+  historico.forEach(h => {
+    const clave = claveCanonica(h.venue);
+    if (!vistos.has(clave)) vistos.set(clave, { nombresParque: {}, equipos: {} });
+    const info = vistos.get(clave);
+    info.nombresParque[h.venue] = (info.nombresParque[h.venue] || 0) + 1;
+    if (h.home) info.equipos[h.home] = (info.equipos[h.home] || 0) + 1;
+  });
+
+  const opciones = [...vistos.entries()].map(([clave, info]) => {
+    const nombreParque = Object.entries(info.nombresParque).sort((a, b) => b[1] - a[1])[0][0];
+    const equipoEntries = Object.entries(info.equipos).sort((a, b) => b[1] - a[1]);
+    // Normalmente un solo equipo local por parque; si aparece más de uno
+    // (ej. datos mezclados o parque compartido), se listan todos.
+    const equipos = equipoEntries.map(e => e[0]).join(" / ") || "Equipo local N/C";
+    return { clave, nombreParque, equipos };
+  }).sort((a, b) => a.equipos.localeCompare(b.equipos));
+
+  if (!opciones.length) {
+    sel.innerHTML = `<option value="" disabled selected>Sin parques disponibles — falta histórico</option>`;
+    sel.disabled = true;
+    return;
+  }
+
+  sel.disabled = false;
+  sel.innerHTML = opciones
+    .map(o => `<option value="${o.clave}">${o.equipos} — ${o.nombreParque}</option>`)
+    .join("");
+}
+
+function diagnosticarDependencias() {
+  const faltantes = [];
+  if (typeof window.MLBPRO_CORE === "undefined") faltantes.push("mlbpro-core.js (window.MLBPRO_CORE)");
+  if (typeof window.MLBPRO_VIENTO === "undefined") faltantes.push("mlbpro-viento.js (window.MLBPRO_VIENTO)");
+  if (typeof stadiumCanonName !== "function") faltantes.push("estadios.js (función stadiumCanonName)");
+  if (typeof stadiumNorm !== "function") faltantes.push("estadios.js (función stadiumNorm)");
+  if (typeof getOrientacionParque !== "function") faltantes.push("parques-orientacion.js (función getOrientacionParque)");
+  return faltantes;
+}
+
+function cargarHistorico() {
+  const aviso = document.getElementById("avisoOrigen");
+
+  const faltantes = diagnosticarDependencias();
+  if (faltantes.length) {
+    aviso.className = "aviso bad";
+    aviso.innerHTML =
+      "NO SE PUDO CARGAR: falta encontrar " + faltantes.join(", ") + ". " +
+      "Revisá que esos archivos existan EXACTAMENTE con ese nombre (mayúsculas/minúsculas incluidas) " +
+      "en la misma carpeta que este HTML dentro del repo, y que no haya dado error 404. " +
+      "En el navegador del celular podés confirmarlo abriendo la URL del archivo directo, ej: " +
+      "<br><code>" + location.href.replace(/[^/]+$/, "") + "mlbpro-core.js</code>" +
+      " — si te muestra el código JS, existe; si da 404, ese es el problema.";
+    return;
+  }
+
+  try {
+    historico = CORE.leerHistoricoCache();
+  } catch (e) {
+    aviso.className = "aviso bad";
+    aviso.textContent = "ERROR leyendo el histórico: " + (e && e.message ? e.message : e);
+    return;
+  }
+
+  if (!historico.length) {
+    aviso.className = "aviso bad";
+    aviso.innerHTML =
+      "SIN HISTÓRICO EN CACHÉ desde este origen. Esta herramienta lee el mismo localStorage que index.html " +
+      "(clave <code>" + CORE.CACHE_HIST + "</code>), pero necesita estar servida desde el MISMO dominio/carpeta " +
+      "que index.html para verlo. Si ya jalaste el histórico ahí, asegurate de abrir este archivo desde el mismo sitio.";
+    return;
+  }
+
+  aviso.className = "aviso";
+  aviso.textContent = "Histórico en caché: " + historico.length + " juegos.";
+  poblarSelectorParques();
+
+  if (document.getElementById("selParque").disabled) {
+    aviso.className = "aviso bad";
+    aviso.textContent += " Pero ninguna fila tiene un campo 'venue' usable — revisá el formato del histórico.";
+  }
+}
+
+function buscarManual() {
+  if (!historico.length) { document.getElementById("resultadoManual").innerHTML = ""; return; }
+
+  const claveParque = document.getElementById("selParque").value;
+  const [velMin, velMax] = document.getElementById("selVelocidad").value.split("-").map(Number);
+  const direccionElegida = document.getElementById("selDireccion").value;
+
+  const filtrados = historico.filter(h => {
+    if (claveCanonica(h.venue) !== claveParque) return false;
+    if (!esNumeroReal(h.windMph)) return false;
+    const mph = Number(h.windMph);
+    if (mph < velMin || mph > velMax) return false;
+    if (direccionElegida !== "cualquiera") {
+      const cat = categoriaDireccion(h.venue, h.windDir);
+      if (cat !== direccionElegida) return false;
+    }
+    return true;
+  });
+
+  const conCarreras = filtrados.filter(h => esNumeroReal(h.totalRuns));
+  const runsArr = conCarreras.map(h => Number(h.totalRuns));
+  const prom = promedio(runsArr);
+  const min = runsArr.length ? Math.min(...runsArr) : null;
+  const max = runsArr.length ? Math.max(...runsArr) : null;
+
+  const nombreParque = document.getElementById("selParque").selectedOptions[0]?.textContent || claveParque;
+
+  let html = `
+    <div class="card">
+      <div class="titulo">${nombreParque}</div>
+      <div class="metric">${prom !== null ? prom.toFixed(2) : "SIN DATOS"} carreras prom.</div>
+      <div class="meta">${conCarreras.length} juego(s) con carreras confirmadas · ${filtrados.length} juego(s) totales en el filtro</div>
+      ${prom !== null ? `<div class="meta">Rango observado: ${min} – ${max} carreras</div>` : ""}
+    </div>
+  `;
+
+  if (filtrados.length) {
+    html += `
+      <details>
+        <summary>Ver los ${filtrados.length} juego(s) encontrados</summary>
+        ${filtrados
+          .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+          .map(h => `
+            <div class="juego-item">
+              <b>${h.date}</b> · ${h.away} @ ${h.home}<br>
+              viento ${esNumeroReal(h.windMph) ? Number(h.windMph).toFixed(1) : "N/C"} mph
+              (dir ${esNumeroReal(h.windDir) ? Math.round(h.windDir) + "°" : "N/C"},
+              ${categoriaDireccion(h.venue, h.windDir)}) ·
+              carreras: ${esNumeroReal(h.totalRuns) ? h.totalRuns : "N/C"}
+            </div>
+          `).join("")}
+      </details>
+    `;
+  } else {
+    html += `<div class="card"><div class="meta">Sin juegos históricos que cumplan ese filtro exacto. Probá un rango de viento más amplio o "Cualquiera" en dirección.</div></div>`;
+  }
+
+  document.getElementById("resultadoManual").innerHTML = html;
+}
+
+function generarDashboard() {
+  if (!historico.length) { document.getElementById("dashboard").innerHTML = ""; return; }
+
+  const MIN_MUESTRA = 3;
+  const buckets = ["0-5", "5-8", "8-12", "13-16", "16-999"];
+  const etiquetaBucket = { "0-5": "0–5 mph", "5-8": "5–8 mph", "8-12": "8–12 mph", "13-16": "13–16 mph", "16-999": "16+ mph" };
+  const direcciones = ["bateo", "picheo", "neutral"];
+  const etiquetaDireccion = { bateo: "Favor bateo", picheo: "Favor picheo", neutral: "Neutral/cruzada" };
+
+  // grupo[claveParque][bucket][direccion] = [runs...]
+  const grupos = new Map();
+  const nombreParque = new Map();
+
+  historico.forEach(h => {
+    if (!esNumeroReal(h.windMph) || !esNumeroReal(h.totalRuns)) return;
+    const clave = claveCanonica(h.venue);
+    const bucket = bucketVelocidad(h.windMph);
+    if (!bucket) return;
+    const direccion = categoriaDireccion(h.venue, h.windDir);
+
+    if (!grupos.has(clave)) grupos.set(clave, {});
+    if (!nombreParque.has(clave)) nombreParque.set(clave, h.venue);
+    const porParque = grupos.get(clave);
+    if (!porParque[bucket]) porParque[bucket] = {};
+    if (!porParque[bucket][direccion]) porParque[bucket][direccion] = [];
+    porParque[bucket][direccion].push(Number(h.totalRuns));
+  });
+
+  const filas = [];
+  grupos.forEach((porBucket, clave) => {
+    buckets.forEach(bucket => {
+      direcciones.forEach(direccion => {
+        const arr = (porBucket[bucket] && porBucket[bucket][direccion]) || [];
+        if (arr.length >= MIN_MUESTRA) {
+          filas.push({
+            parque: nombreParque.get(clave),
+            bucket,
+            direccion,
+            n: arr.length,
+            prom: promedio(arr)
+          });
+        }
+      });
+    });
+  });
+
+  if (!filas.length) {
+    document.getElementById("dashboard").innerHTML =
+      `<div class="card"><div class="meta">Ningún grupo llega a ${MIN_MUESTRA} juegos todavía. Necesitás más histórico cargado en index.html.</div></div>`;
+    return;
+  }
+
+  filas.sort((a, b) => b.prom - a.prom);
+
+  const promGlobal = promedio(historico.filter(h => esNumeroReal(h.totalRuns)).map(h => Number(h.totalRuns)));
+
+  const html = `
+    <div class="card">
+      <div class="meta">Promedio general de carreras (todo el histórico, todos los parques): <b>${promGlobal !== null ? promGlobal.toFixed(2) : "N/C"}</b></div>
+      <div class="meta">Filas con ≥${MIN_MUESTRA} juegos: ${filas.length}</div>
+    </div>
+    <table>
+      <tr><th>Parque</th><th>Viento</th><th>Dirección</th><th>Prom. carreras</th><th>vs. general</th><th>n</th></tr>
+      ${filas.map(f => {
+        const diff = f.prom - promGlobal;
+        const cls = diff >= 1 ? "ok" : diff <= -1 ? "bad" : "mid";
+        const signo = diff > 0 ? "+" : "";
+        return `
+          <tr>
+            <td>${f.parque}</td>
+            <td>${etiquetaBucket[f.bucket]}</td>
+            <td>${etiquetaDireccion[f.direccion]}</td>
+            <td><b>${f.prom.toFixed(2)}</b></td>
+            <td class="${cls}">${signo}${diff.toFixed(2)}</td>
+            <td>${f.n}</td>
+          </tr>
+        `;
+      }).join("")}
+    </table>
+  `;
+
+  document.getElementById("dashboard").innerHTML = html;
+}
+
+window.addEventListener("load", cargarHistorico);
+</script>
+</body>
+</html>
