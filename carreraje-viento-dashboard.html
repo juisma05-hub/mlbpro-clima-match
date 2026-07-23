@@ -38,9 +38,12 @@ details summary { cursor:pointer; font-weight:800; color:#9ad; margin-top:8px; }
 <body>
 
 <h1>MLBPro · Carreraje por Viento y Parque</h1>
-<div class="sub">Herramienta separada, de solo lectura. No modifica index.html, viento-parque.html, ni el histórico guardado.</div>
+<div class="sub">Puede jalar/actualizar el histórico igual que index.html (mismo localStorage), y analizarlo por parque y viento. No modifica ningún archivo .js ni .html existente.</div>
 
 <div id="avisoOrigen" class="aviso">Verificando histórico en caché...</div>
+
+<button onclick="jalarHistoricoDashboard()">JALAR / ACTUALIZAR HISTÓRICO</button>
+<div id="estadoJalado" class="sub" style="margin-top:-8px"></div>
 
 <h2>1. Buscador manual</h2>
 <label>Parque</label>
@@ -213,6 +216,123 @@ function diagnosticarDependencias() {
   if (typeof stadiumNorm !== "function") faltantes.push("estadios.js (función stadiumNorm)");
   if (typeof getOrientacionParque !== "function") faltantes.push("parques-orientacion.js (función getOrientacionParque)");
   return faltantes;
+}
+
+async function jalarHistoricoDashboard() {
+  const estadoEl = document.getElementById("estadoJalado");
+  const faltantes = diagnosticarDependencias();
+  if (faltantes.length) {
+    estadoEl.textContent = "No se puede jalar: falta " + faltantes.join(", ");
+    return;
+  }
+
+  try {
+    let rows = CORE.leerHistoricoCache();
+    const end = CORE.ayerISO();
+    let d = CORE.START_HIST;
+
+    if (rows.length) {
+      const fechas = rows.map(r => r.date).filter(Boolean).sort();
+      const ultima = fechas[fechas.length - 1];
+      d = CORE.addDays(ultima, 1);
+    }
+
+    if (d > end) {
+      estadoEl.textContent = "Histórico ya actualizado hasta " + end + " (" + rows.length + " filas).";
+      cargarHistorico();
+      return;
+    }
+
+    const gamePksExistentes = new Set(rows.map(r => String(r.gamePk)).filter(Boolean));
+    let saltados = 0;
+
+    while (d <= end) {
+      estadoEl.textContent = "Jalando histórico: " + d + " · filas: " + rows.length + " · saltados: " + saltados;
+
+      let games = [];
+      try {
+        games = await CORE.scheduleByDate(d);
+      } catch (e) {
+        d = CORE.addDays(d, 1);
+        continue;
+      }
+
+      for (const g of games) {
+        if (!CORE.esJuegoFinal(g)) { saltados++; continue; }
+        if (gamePksExistentes.has(String(g.gamePk))) continue;
+
+        const venueId = g.venue?.id;
+        if (!venueId) { saltados++; continue; }
+
+        let venueFull = null, coords = null;
+        try {
+          venueFull = await CORE.getVenueFull(venueId);
+          coords = CORE.coordsFromVenue(venueFull);
+        } catch (e) { saltados++; continue; }
+        if (!coords) { saltados++; continue; }
+
+        const nombreParque = g.venue?.name || venueFull?.name;
+
+        let clima = null;
+        try {
+          clima = await CORE.getClimaHistorico(coords.lat, coords.lon, d, g.gameDate, nombreParque);
+        } catch (e) { saltados++; continue; }
+        if (!clima) { saltados++; continue; }
+
+        let box;
+        try {
+          box = await CORE.getBoxScore(g.gamePk);
+        } catch (e) { saltados++; continue; }
+
+        let trayectoria = null;
+        try {
+          trayectoria = await CORE.getTrayectoriaVientoHistorico(coords.lat, coords.lon, g.gameDate, nombreParque);
+        } catch (e) {
+          trayectoria = null;
+        }
+
+        rows.push({
+          gamePk: g.gamePk,
+          date: d,
+          away: g.teams?.away?.team?.name || "?",
+          home: g.teams?.home?.team?.name || "?",
+          venue: g.venue?.name || venueFull?.name || "SIN PARQUE",
+          venueId: venueId,
+          roof: venueFull?.roofType || venueFull?.roof || "",
+          lat: coords.lat,
+          lon: coords.lon,
+          tempF: clima.tempF,
+          humidity: clima.humidity,
+          precip: clima.precip,
+          windMph: clima.windMph,
+          windDir: clima.windDir,
+          timezoneUsado: clima.timezoneUsado,
+          horaLocalObjetivo: clima.horaLocalObjetivo,
+          horaClimaUtilizada: clima.horaClimaUtilizada,
+          trayectoriaViento: trayectoria,
+          awayRuns: box.awayRuns,
+          homeRuns: box.homeRuns,
+          totalRuns: box.awayRuns + box.homeRuns,
+          awayKs: box.awayKs,
+          homeKs: box.homeKs,
+          totalKs: box.awayKs + box.homeKs,
+          awayHRs: box.awayHRs,
+          homeHRs: box.homeHRs,
+          totalHRs: box.awayHRs + box.homeHRs
+        });
+
+        gamePksExistentes.add(String(g.gamePk));
+      }
+      d = CORE.addDays(d, 1);
+    }
+
+    CORE.guardarHistoricoCache(rows);
+    estadoEl.textContent = "Histórico actualizado: " + rows.length + " filas totales · " + saltados + " saltados en esta corrida.";
+    cargarHistorico();
+  } catch (e) {
+    estadoEl.textContent = "ERROR jalando histórico: " + (e && e.message ? e.message : e);
+    console.error(e);
+  }
 }
 
 function cargarHistorico() {
