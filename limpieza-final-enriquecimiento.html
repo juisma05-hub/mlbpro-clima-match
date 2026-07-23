@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MLBPro · Limpieza final de enriquecimiento</title>
+<style>
+body{background:#000;color:#e8e8e8;font-family:-apple-system,system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:18px;color:#f5c518;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin-bottom:14px}
+button{width:100%;padding:14px;margin:6px 0;font-size:14px;font-weight:800;color:#000;background:#f5c518;border:none;border-radius:12px}
+button:disabled{opacity:.4}
+button.warn{background:#da3633;color:#fff}
+#estado{margin:12px 0;font-size:13px;color:#9ad}
+.bloque{border:1px solid #333;border-radius:12px;padding:14px;margin-bottom:12px;background:#0c0c0c}
+.titulo{font-size:15px;font-weight:800;color:#fff;margin-bottom:8px}
+.meta{font-size:13px;color:#ddd;margin:4px 0}
+.ok{color:#32d74b;font-weight:800}
+.bad{color:#ff453a;font-weight:800}
+.small{font-size:12px;color:#aaa;margin-top:5px}
+.tabla{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.tabla th,.tabla td{border:1px solid #222;padding:5px;text-align:left;color:#ccc}
+.tabla th{background:#151515;color:#f5c518}
+</style>
+</head>
+<body>
+<h1>MLBPro · Limpieza final de enriquecimiento</h1>
+<div class="sub">Elimina únicamente 9 gamePk específicos · verificación antes y después · un solo guardado</div>
+
+<button onclick="fase1_verificarYMostrar()">1) VERIFICAR PRECONDICIÓN Y LOCALIZAR LOS 9 gamePk</button>
+<button class="warn" id="btnEliminar" onclick="fase2_eliminarConConfirmacion()" disabled>2) ELIMINAR (pide confirmación, guarda una sola vez)</button>
+
+<div id="estado">Listo.</div>
+<div id="reporte"></div>
+
+<script src="mlbpro-core.js"></script>
+
+<script>
+/* ============================================================
+   PRÓLOGO — limpieza-final-enriquecimiento.html
+   ============================================================
+   QUÉ ES:
+     Herramienta de un solo propósito: eliminar de
+     MLBPRO_DATA_MADRE_HIST_2026_V1 ÚNICAMENTE estos 9 gamePk,
+     hardcodeados a propósito porque son casos puntuales ya
+     decididos por Perez, no una cifra general del histórico:
+
+       824766, 823543, 824514, 823539, 824589, 824424, 824911,
+       824664, 823042
+
+     No modifica ningún otro archivo. No toca index.html,
+     mlbpro-core.js (solo lo carga para usar sus funciones públicas
+     de lectura/escritura, sin modificar su código), mlb-routes.js,
+     pitchers-master.js, estadios.js, F5, K6, Coincidencia,
+     Moneyline ni Over/Under. No hace ninguna llamada de red — todo
+     es lectura y escritura de localStorage vía las funciones ya
+     aprobadas de mlbpro-core.js.
+
+   FASE 1 — VERIFICACIÓN PREVIA (solo lectura):
+     Lee CORE.leerHistoricoCache() y confirma, con los datos reales
+     leídos en este momento:
+       - filas totales (se espera 1,525);
+       - gamePk únicos (se espera 1,525);
+       - duplicados (se espera 0).
+     Si estos tres valores no son exactamente los esperados, el
+     proceso se BLOQUEA — no se muestra la tabla de eliminación, no
+     se habilita el botón de borrado. Esto evita operar sobre un
+     estado de Data Madre distinto al que Perez ya validó.
+     Si la precondición se cumple, localiza cuáles de los 9 gamePk
+     objetivo existen realmente en el caché (podría ser que alguno ya
+     no esté, por ejemplo si ya se borró antes) y muestra, para cada
+     uno encontrado: índice, gamePk, date, away, home — para que
+     Perez vea exactamente qué fila va a desaparecer antes de tocar
+     nada. Si falta alguno de los 9 en el caché, se reporta
+     explícitamente como "NO ENCONTRADO", nunca se asume que ya fue
+     borrado sin decirlo.
+     CANDADO DE INTEGRIDAD: el botón de eliminar SOLO se habilita si
+     se encontraron EXACTAMENTE los 9 gamePk (encontrados.length ===
+     GAMEPKS_A_ELIMINAR.length) — nunca con 1, 5 u 8 de 9, para no
+     permitir una eliminación parcial que deje Data Madre en un
+     estado a medias.
+
+   FASE 2 — ELIMINACIÓN CONTROLADA (ESCRIBE, una sola vez):
+     Antes de borrar, vuelve a leer el caché (no reutiliza la lectura
+     de la Fase 1, para no operar sobre una copia potencialmente
+     vieja) y repite la verificación de precondición (1,525 / 1,525 /
+     0). Si algo cambió desde la Fase 1, se detiene y pide repetir la
+     Fase 1.
+     CANDADO DE INTEGRIDAD (antes del confirm() y antes de guardar):
+     se exigen las tres condiciones siguientes a la vez —
+       1. cantidadABorrar === 9 (los 9 gamePk exactos, ni más ni
+          menos);
+       2. filasNuevas.length === 1,516 (el tamaño resultante exacto);
+       3. los 9 gamePk estaban presentes en ESTA lectura actual del
+          caché.
+     Si cualquiera de las tres falla, el proceso se BLOQUEA de
+     inmediato, muestra cuál candado falló, y NUNCA llama a
+     CORE.guardarHistoricoCache() — no hay ningún camino en el que se
+     guarde una eliminación parcial.
+     Solo si los tres candados pasan, pide una confirmación explícita
+     (confirm()) indicando exactamente cuántas de las 9 filas se van
+     a eliminar.
+     Guarda el resultado con UNA SOLA llamada a
+     CORE.guardarHistoricoCache() — nunca más de una vez, nunca
+     parcial. Antes de guardar, verifica que TODAS las filas que NO
+     están en la lista de 9 sigan teniendo exactamente el mismo
+     contenido (comparación por gamePk, JSON.stringify de la fila
+     completa) que tenían al leer en esta misma Fase 2 — si cualquier
+     otra fila cambiaría de contenido, se aborta sin guardar nada.
+     Tras guardar, relee el caché (CORE.guardarHistoricoCache() no
+     devuelve ningún valor — se revisó su código real en
+     mlbpro-core.js, es un try/catch mudo sobre localStorage.setItem;
+     la única confirmación honesta de éxito es releer después) y
+     confirma:
+       - filas totales (se espera 1,516);
+       - gamePk únicos (se espera 1,516);
+       - duplicados (se espera 0);
+       - que los 9 gamePk objetivo ya NO existen en el caché.
+     Si cualquiera de estas verificaciones falla, se muestra el error
+     real y el proceso NO se declara cerrado.
+
+   ESTADO:
+     Recién creada. No se ha corrido todavía.
+
+   FECHA:
+     22 jul 2026.
+   ============================================================ */
+
+const GAMEPKS_A_ELIMINAR = [
+  "824766", "823543", "824514", "823539", "824589",
+  "824424", "824911", "824664", "823042"
+];
+
+const FILAS_ESPERADAS_ANTES = 1525;
+const FILAS_ESPERADAS_DESPUES = 1516;
+
+function setEstado(t) { document.getElementById("estado").textContent = t; }
+function render(html) { document.getElementById("reporte").innerHTML = html; }
+function agregar(html) { document.getElementById("reporte").innerHTML += html; }
+
+function contarGamePk(filas) {
+  const conteo = new Map();
+  filas.forEach(f => {
+    if (!f || f.gamePk == null) return;
+    const k = String(f.gamePk);
+    conteo.set(k, (conteo.get(k) || 0) + 1);
+  });
+  return conteo;
+}
+
+let ULTIMO_ESTADO_VERIFICADO = null; // { filasTotales, gamePksUnicos, duplicados, encontrados: [...] }
+
+/* ============================================================
+   FASE 1 — verificación previa + localización de los 9 gamePk
+   ============================================================ */
+function fase1_verificarYMostrar() {
+  try {
+    document.getElementById("btnEliminar").disabled = true;
+    ULTIMO_ESTADO_VERIFICADO = null;
+    setEstado("Verificando precondición...");
+    render("");
+
+    if (typeof window.MLBPRO_CORE === "undefined" || typeof window.MLBPRO_CORE.leerHistoricoCache !== "function") {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">CORE.leerHistoricoCache no disponible.</div></div>`);
+      setEstado("Detenido: CORE no disponible.");
+      return;
+    }
+    if (typeof window.MLBPRO_CORE.guardarHistoricoCache !== "function") {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">CORE.guardarHistoricoCache no disponible.</div></div>`);
+      setEstado("Detenido: CORE.guardarHistoricoCache no disponible.");
+      return;
+    }
+
+    const CORE = window.MLBPRO_CORE;
+    const filas = CORE.leerHistoricoCache();
+    if (!Array.isArray(filas)) {
+      render(`<div class="bloque"><div class="titulo bad">ERROR</div><div class="meta">CORE.leerHistoricoCache() no devolvió un array.</div></div>`);
+      setEstado("Detenido: caché no es array.");
+      return;
+    }
+
+    const filasTotales = filas.length;
+    const conteo = contarGamePk(filas);
+    const gamePksUnicos = conteo.size;
+    const duplicados = Array.from(conteo.values()).filter(n => n > 1).length;
+
+    const precondicionOK = filasTotales === FILAS_ESPERADAS_ANTES && gamePksUnicos === FILAS_ESPERADAS_ANTES && duplicados === 0;
+
+    let html = `
+      <div class="bloque">
+        <div class="titulo">Verificación previa</div>
+        <div class="meta ${filasTotales === FILAS_ESPERADAS_ANTES ? 'ok' : 'bad'}">Filas totales: <b>${filasTotales}</b> (esperado: ${FILAS_ESPERADAS_ANTES})</div>
+        <div class="meta ${gamePksUnicos === FILAS_ESPERADAS_ANTES ? 'ok' : 'bad'}">gamePk únicos: <b>${gamePksUnicos}</b> (esperado: ${FILAS_ESPERADAS_ANTES})</div>
+        <div class="meta ${duplicados === 0 ? 'ok' : 'bad'}">Duplicados: <b>${duplicados}</b> (esperado: 0)</div>
+      </div>
+    `;
+
+    if (!precondicionOK) {
+      html += `<div class="bloque"><div class="titulo bad">PROCESO BLOQUEADO</div><div class="meta">La precondición no coincide con lo esperado. No se muestra la lista de eliminación ni se habilita el borrado.</div></div>`;
+      render(html);
+      setEstado("Bloqueado: precondición no cumplida.");
+      return;
+    }
+
+    const porGamePk = new Map(filas.map((f, i) => [String(f.gamePk), { indice: i, fila: f }]));
+    const encontrados = [];
+    const noEncontrados = [];
+
+    GAMEPKS_A_ELIMINAR.forEach(gp => {
+      const hit = porGamePk.get(gp);
+      if (hit) encontrados.push({ gamePk: gp, indice: hit.indice, fila: hit.fila });
+      else noEncontrados.push(gp);
+    });
+
+    html += `
+      <div class="bloque">
+        <div class="titulo">Filas encontradas para eliminar (${encontrados.length} de ${GAMEPKS_A_ELIMINAR.length})</div>
+        <table class="tabla">
+          <tr><th>gamePk</th><th>índice</th><th>date</th><th>away</th><th>home</th></tr>
+          ${encontrados.map(e => `<tr><td>${e.gamePk}</td><td>${e.indice}</td><td>${e.fila.date || "N/C"}</td><td>${e.fila.away || "N/C"}</td><td>${e.fila.home || "N/C"}</td></tr>`).join("")}
+        </table>
+        ${noEncontrados.length ? `
+          <div class="meta bad" style="margin-top:8px">NO ENCONTRADOS en el caché (${noEncontrados.length}): ${noEncontrados.join(", ")}</div>
+        ` : `<div class="meta ok" style="margin-top:8px">Los 9 gamePk objetivo fueron encontrados.</div>`}
+      </div>
+    `;
+
+    render(html);
+
+    ULTIMO_ESTADO_VERIFICADO = { filasTotales, gamePksUnicos, duplicados, encontrados, noEncontrados };
+    document.getElementById("btnEliminar").disabled = encontrados.length !== GAMEPKS_A_ELIMINAR.length;
+    setEstado("Verificación completa. " + encontrados.length + " fila(s) localizada(s) para eliminar.");
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 1: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+
+/* ============================================================
+   FASE 2 — eliminación controlada (escribe, una sola vez)
+   ============================================================ */
+function fase2_eliminarConConfirmacion() {
+  try {
+    if (!ULTIMO_ESTADO_VERIFICADO || !ULTIMO_ESTADO_VERIFICADO.encontrados.length) {
+      setEstado("Corre primero la Fase 1.");
+      return;
+    }
+
+    const CORE = window.MLBPRO_CORE;
+    const filasActuales = CORE.leerHistoricoCache();
+    if (!Array.isArray(filasActuales)) {
+      setEstado("ERROR: el caché no devolvió un array al releer.");
+      return;
+    }
+
+    const conteoActual = contarGamePk(filasActuales);
+    const filasTotalesActual = filasActuales.length;
+    const gamePksUnicosActual = conteoActual.size;
+    const duplicadosActual = Array.from(conteoActual.values()).filter(n => n > 1).length;
+
+    if (filasTotalesActual !== FILAS_ESPERADAS_ANTES || gamePksUnicosActual !== FILAS_ESPERADAS_ANTES || duplicadosActual !== 0) {
+      render(`<div class="bloque"><div class="titulo bad">ELIMINACIÓN DETENIDA</div>
+        <div class="meta">La precondición cambió desde la Fase 1 (ahora: ${filasTotalesActual} filas, ${gamePksUnicosActual} únicos, ${duplicadosActual} duplicados). Corre la Fase 1 de nuevo.</div></div>`);
+      setEstado("Detenido: la precondición ya no coincide.");
+      document.getElementById("btnEliminar").disabled = true;
+      return;
+    }
+
+    const setAEliminar = new Set(GAMEPKS_A_ELIMINAR);
+    const aEliminarReal = filasActuales.filter(f => f && f.gamePk != null && setAEliminar.has(String(f.gamePk)));
+    const cantidadABorrar = aEliminarReal.length;
+    const filasNuevas = filasActuales.filter(f => !(f && f.gamePk != null && setAEliminar.has(String(f.gamePk))));
+
+    // --- Candado de integridad: los 9 exactos, ni más ni menos, y el
+    // tamaño resultante exacto. Si cualquiera falla, se bloquea SIN llamar
+    // a CORE.guardarHistoricoCache(). ---
+    const gamePksPresentesReal = GAMEPKS_A_ELIMINAR.filter(gp => aEliminarReal.some(f => String(f.gamePk) === gp));
+    const candado1 = cantidadABorrar === GAMEPKS_A_ELIMINAR.length;
+    const candado2 = filasNuevas.length === FILAS_ESPERADAS_DESPUES;
+    const candado3 = gamePksPresentesReal.length === GAMEPKS_A_ELIMINAR.length;
+
+    if (!candado1 || !candado2 || !candado3) {
+      const gamePksAusentesDeLosNueve = GAMEPKS_A_ELIMINAR.filter(gp => !gamePksPresentesReal.includes(gp));
+      render(`<div class="bloque"><div class="titulo bad">ELIMINACIÓN BLOQUEADA — CANDADO DE INTEGRIDAD</div>
+        <div class="meta ${candado1 ? 'ok' : 'bad'}">cantidadABorrar === ${GAMEPKS_A_ELIMINAR.length}: <b>${candado1 ? "OK" : "NO — encontró " + cantidadABorrar}</b></div>
+        <div class="meta ${candado2 ? 'ok' : 'bad'}">filasNuevas.length === ${FILAS_ESPERADAS_DESPUES}: <b>${candado2 ? "OK" : "NO — sería " + filasNuevas.length}</b></div>
+        <div class="meta ${candado3 ? 'ok' : 'bad'}">Los 9 gamePk presentes en esta lectura: <b>${candado3 ? "OK" : "NO — faltan: " + gamePksAusentesDeLosNueve.join(", ")}</b></div>
+        <div class="meta bad" style="margin-top:8px">No se llamó a CORE.guardarHistoricoCache(). Nada se guardó.</div>
+      </div>`);
+      setEstado("Eliminación bloqueada: candado de integridad no se cumplió.");
+      document.getElementById("btnEliminar").disabled = true;
+      return;
+    }
+
+    // Firma de TODAS las filas que NO se van a eliminar, capturada AHORA,
+    // para verificar después de guardar que ninguna otra fila cambió.
+    const firmasOtrasFilas = new Map();
+    filasActuales.forEach(f => {
+      if (!f || f.gamePk == null) return;
+      const gp = String(f.gamePk);
+      if (!setAEliminar.has(gp)) firmasOtrasFilas.set(gp, JSON.stringify(f));
+    });
+
+    const confirmado = confirm(
+      "Candado de integridad OK: exactamente " + GAMEPKS_A_ELIMINAR.length + " gamePk encontrados, resultado esperado " + FILAS_ESPERADAS_DESPUES + " filas.\n\n" +
+      "¿Eliminar exactamente " + cantidadABorrar + " fila(s) de las " + filasTotalesActual + " filas totales?\n\n" +
+      "gamePk a eliminar: " + aEliminarReal.map(f => f.gamePk).join(", ") + "\n\n" +
+      "Ninguna otra fila se modifica. Esto escribe en localStorage vía CORE.guardarHistoricoCache() (una sola llamada) y no se puede deshacer fácilmente."
+    );
+    if (!confirmado) {
+      setEstado("Eliminación cancelada por el usuario.");
+      return;
+    }
+
+    CORE.guardarHistoricoCache(filasNuevas);
+    // guardarHistoricoCache() no devuelve valor (revisado en mlbpro-core.js:
+    // try/catch mudo sobre localStorage.setItem). La única confirmación
+    // honesta de éxito es releer el caché ahora mismo.
+
+    const filasTrasGuardar = CORE.leerHistoricoCache();
+    const conteoPost = contarGamePk(filasTrasGuardar);
+    const filasTotalesPost = filasTrasGuardar.length;
+    const gamePksUnicosPost = conteoPost.size;
+    const duplicadosPost = Array.from(conteoPost.values()).filter(n => n > 1).length;
+
+    const gamePksAusentesConfirmado = GAMEPKS_A_ELIMINAR.every(gp => !conteoPost.has(gp));
+    const gamePksTodaviaPresentes = GAMEPKS_A_ELIMINAR.filter(gp => conteoPost.has(gp));
+
+    // Verificar que ninguna OTRA fila cambió de contenido.
+    let otrasFilasIntactas = true;
+    const problemasOtrasFilas = [];
+    const mapaPost = new Map(filasTrasGuardar.map(f => [String(f.gamePk), f]));
+    firmasOtrasFilas.forEach((firmaVieja, gp) => {
+      const filaNueva = mapaPost.get(gp);
+      if (!filaNueva) {
+        otrasFilasIntactas = false;
+        problemasOtrasFilas.push({ gamePk: gp, motivo: "DESAPARECIÓ (no debía eliminarse)" });
+        return;
+      }
+      const firmaNueva = JSON.stringify(filaNueva);
+      if (firmaNueva !== firmaVieja) {
+        otrasFilasIntactas = false;
+        problemasOtrasFilas.push({ gamePk: gp, motivo: "CONTENIDO CAMBIÓ" });
+      }
+    });
+
+    const resultadoOK =
+      filasTotalesPost === FILAS_ESPERADAS_DESPUES &&
+      gamePksUnicosPost === FILAS_ESPERADAS_DESPUES &&
+      duplicadosPost === 0 &&
+      gamePksAusentesConfirmado &&
+      otrasFilasIntactas;
+
+    agregar(`
+      <div class="bloque">
+        <div class="titulo">Resultado tras guardar</div>
+        <div class="meta ${filasTotalesPost === FILAS_ESPERADAS_DESPUES ? 'ok' : 'bad'}">Filas totales: <b>${filasTotalesPost}</b> (esperado: ${FILAS_ESPERADAS_DESPUES})</div>
+        <div class="meta ${gamePksUnicosPost === FILAS_ESPERADAS_DESPUES ? 'ok' : 'bad'}">gamePk únicos: <b>${gamePksUnicosPost}</b> (esperado: ${FILAS_ESPERADAS_DESPUES})</div>
+        <div class="meta ${duplicadosPost === 0 ? 'ok' : 'bad'}">Duplicados: <b>${duplicadosPost}</b> (esperado: 0)</div>
+        <div class="meta ${gamePksAusentesConfirmado ? 'ok' : 'bad'}">Los 9 gamePk ya no existen: <b>${gamePksAusentesConfirmado ? "CONFIRMADO" : "NO — todavía presentes: " + gamePksTodaviaPresentes.join(", ")}</b></div>
+        <div class="meta ${otrasFilasIntactas ? 'ok' : 'bad'}">Resto de filas intactas (sin cambios de contenido): <b>${otrasFilasIntactas ? "SÍ" : "NO — " + problemasOtrasFilas.length + " problema(s)"}</b></div>
+        ${resultadoOK
+          ? `<div class="meta ok" style="margin-top:8px"><b>ELIMINACIÓN CERRADA CORRECTAMENTE.</b></div>`
+          : `<div class="meta bad" style="margin-top:8px"><b>ERROR: EL RESULTADO NO CUMPLE LAS CONDICIONES.</b> No se declara cerrado.</div>`}
+        ${problemasOtrasFilas.length ? `<table class="tabla"><tr><th>gamePk</th><th>motivo</th></tr>${problemasOtrasFilas.map(p => `<tr><td>${p.gamePk}</td><td>${p.motivo}</td></tr>`).join("")}</table>` : ""}
+      </div>
+    `);
+    document.getElementById("btnEliminar").disabled = true;
+    ULTIMO_ESTADO_VERIFICADO = null;
+    setEstado((resultadoOK ? "Eliminación CERRADA. " : "Eliminación con ERROR — no cerrada. ") + filasTotalesPost + " filas.");
+  } catch (e) {
+    setEstado("ERROR REAL en Fase 2: " + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
