@@ -37,15 +37,25 @@
 
    API (window.MLBPRO_VIENTO):
      scoreMatch(today, h) → number 0-100. today y h son objetos con
-       {tempF, windMph, humidity, precip, venue, windDir}. Compara
-       clima + parque + dirección de viento relativa al parque. Cada
-       componente (temp/viento/humedad/precip/bearing-bonus) solo suma
-       puntos cuando AMBOS lados (today y h) traen ese valor como
-       número real; si falta uno de los dos, ese componente no aporta
-       nada al score (no se inventa 0 ni se fuerza NaN). La comparación
-       de parque usa stadiumNorm(stadiumCanonName(...)) en ambos lados.
+       {tempF, windMph, humidity, precip, venue, windDir,
+       trayectoriaViento}. MISMA FIRMA Y MISMO FORMATO DE SALIDA que
+       antes — index.html no necesita ningún cambio.
+       ANTES de calcular cualquier punto de clima, se aplica el
+       CANDADO DE TRAYECTORIA (ver más abajo). Si el candado no pasa,
+       la función devuelve 0 de inmediato — el histórico queda fuera
+       de los similares, no puede aparecer con 98/99/100%, y no se
+       calcula ningún componente climático para él en esta llamada.
+       Si el candado SÍ pasa, se calcula el score climático exactamente
+       igual que antes (temperatura/viento/humedad/precipitación/
+       parque/bearing-bonus), sin cambios en pesos ni umbrales. Cada
+       componente sigue sumando solo cuando AMBOS lados traen ese valor
+       como número real (esNumeroReal); si falta uno de los dos, ese
+       componente no aporta nada (no se inventa 0 ni se fuerza NaN). La
+       comparación de parque sigue usando
+       stadiumNorm(stadiumCanonName(...)) en ambos lados.
 
      evaluarViento(windDir, hpACF) → {categoria, favoreceBateo, bearingDiff}
+       SIN CAMBIOS en esta pasada.
        categoria: string para mostrar.
        favoreceBateo: true | false | null (null = neutral/cruzado o sin dato).
        Si windDir no es número real → "DIRECCIÓN NO CONFIRMADA".
@@ -53,7 +63,8 @@
        se asume 45° por defecto).
        Usado por evaluarMercados() en index.html para decidir OVER/UNDER.
 
-     tipoBrisa(today) → string. today = {venue, windMph, windDir}.
+     tipoBrisa(today) → string. SIN CAMBIOS en esta pasada. today =
+       {venue, windMph, windDir}.
        PRIMERO chequea roof-status.js (domo cerrado / techo no
        verificado) antes de mirar el viento — ese orden importa, no
        invertirlo. Si windMph no es número real → "VELOCIDAD NO
@@ -64,62 +75,75 @@
        "/ ORIENTACIÓN NO CONFIRMADA" (mismos umbrales de mph que las
        variantes de dirección, ya usados en el archivo: 12 y 7).
 
-   CORRECCIÓN ACTUAL (esta sesión — 4 puntos confirmados por lectura de código):
-   1. Se eliminaron los tres fallback de 45° (en scoreMatch, evaluarViento
-      y tipoBrisa). Sin orientación confirmada del parque (getOrientacionParque
-      devolviendo algo no numérico), ya no se calcula relación viento/parque:
-      en scoreMatch se omite el bonus de bearing; en evaluarViento se
-      devuelve "ORIENTACIÓN NO CONFIRMADA"; en tipoBrisa se devuelve una
-      variante "/ ORIENTACIÓN NO CONFIRMADA" sin llamar a evaluarViento()
-      con un hpACF inventado.
-   2. scoreMatch ya no convierte null/undefined/"" en 0: cada componente
-      (temp, viento, humedad, precipitación) solo suma puntos si ambos
-      lados (today y h) son números reales; si falta uno, ese componente
-      simplemente no aporta (antes, Number(undefined)=NaN contaminaba
-      todo el score con NaN de forma silenciosa). La comparación de
-      parque ahora usa stadiumNorm(stadiumCanonName(...)) en ambos lados
-      en vez de comparar el string crudo de venue.
-   3. evaluarViento ya no asume hpACF=45 cuando no llega un número real:
-      devuelve { categoria:"ORIENTACIÓN NO CONFIRMADA", favoreceBateo:null,
-      bearingDiff:null }. El chequeo de windDir no confirmado se conserva
-      exactamente igual que antes.
-   4. tipoBrisa ya no convierte windMph ausente en 0 mph: si no es número
-      real, devuelve "VELOCIDAD NO CONFIRMADA" antes de evaluar nada más.
-      El orden roof-status.js → velocidad → dirección → orientación se
-      mantiene. Las categorías, umbrales (4, 7, 8, 12, 14) y pesos de
-      scoreMatch (30/25/20/10/15/10/5) quedan intactos. La convención
-      física (windDir = de dónde viene; va hacia = windDir+180°) no se
-      tocó.
-   5. CORRECCIÓN DE SEGUIMIENTO (esta sesión, sobre el punto 2/3/4
-      anteriores): la validación seguía usando Number.isFinite(Number(v)),
-      y como Number(null)===0 y Number("")===0, un dato ausente pasaba
-      como "0 real" en vez de quedar excluido. Se agregó el helper
-      esNumeroReal(v), que descarta explícitamente null/undefined/""
-      ANTES de convertir a número, y se usa ahora en los 6 puntos de
-      entrada de datos: temperatura, viento mph, humedad, precipitación,
-      dirección del viento y orientación del parque (hpACF/hpACFraw).
-      No se tocaron pesos, umbrales, categorías ni la lógica de
-      viene de / va hacia.
+   CORRECCIÓN ACTUAL (esta sesión — candado de trayectoria de 7 puntos
+   en scoreMatch, ÚNICO cambio de esta pasada):
+     Antes, scoreMatch podía dar un score alto (incluso 98-100%) solo
+     por temperatura/humedad/velocidad parecidas, aunque la dirección
+     real del viento durante el juego fuera completamente distinta —
+     porque el bonus de bearing (parque) es un componente más entre
+     varios, no un filtro obligatorio. Ahora, ANTES de sumar cualquier
+     punto climático, scoreMatch exige que el histórico pase este
+     candado; si no lo pasa, devuelve 0 sin calcular nada más:
+
+     1. Ambos juegos (today y h) deben tener trayectoriaViento con
+        clasificación IGUAL exacta:
+          BRISA_ESTABLE solo empareja con BRISA_ESTABLE.
+          BRISA_CAMBIANTE solo empareja con BRISA_CAMBIANTE.
+          DIRECCION_NO_CONFIABLE solo empareja con
+          DIRECCION_NO_CONFIABLE.
+        Si falta trayectoriaViento en cualquiera de los dos lados, o
+        si las clasificaciones no coinciden exacto, el candado falla.
+     2. Ambos juegos deben tener trayectoriaViento.puntos con los 7
+        offsets EXACTOS [-2,-1,0,+1,+2,+3,+4], y cada uno de esos 7
+        puntos debe traer windFromDeg y windMph como números reales
+        (esNumeroReal) en AMBOS lados. Si falta cualquiera de los 7
+        puntos, o cualquiera trae dirección o velocidad no numérica,
+        la trayectoria se considera INCOMPLETA y el candado falla —
+        nunca se rellena un punto faltante ni se asume un valor
+        neutral.
+     3. Con los 7 puntos completos de ambos lados, se compara PUNTO
+        POR PUNTO (mismo offset contra mismo offset — esto ya
+        garantiza, sin lógica adicional, que para BRISA_CAMBIANTE el
+        recorrido completo se compare hora por hora y no solo el
+        punto inicial):
+          - diferencia CIRCULAR de dirección ≤ 5° (358° vs 2° = 4°,
+            nunca 356° — se usa min(|a-b|, 360-|a-b|));
+          - diferencia de velocidad ≤ 2 mph.
+        Si UN SOLO punto de los 7 falla cualquiera de las dos
+        condiciones, el candado falla para todo el histórico — no hay
+        promedio ni tolerancia acumulada, es candado por punto.
+     Si el candado pasa, el resto de scoreMatch (temperatura, viento
+     puntual, humedad, precipitación, parque, bearing-bonus) se
+     conserva EXACTAMENTE igual que antes de esta pasada — no se
+     reemplazó la métrica climática, solo se le antepuso este filtro
+     obligatorio.
+     COMPATIBILIDAD: un histórico sin trayectoriaViento (o con
+     trayectoria incompleta) queda EXCLUIDO de esta coincidencia por
+     diseño — no se rompe nada del archivo, pero tampoco se inventa
+     una compatibilidad neutral para él. Esto es intencional: la
+     especificación pide excluir, no simular. Un juego de HOY sin
+     trayectoriaViento tampoco puede emparejar con ningún histórico
+     bajo este candado, por el mismo motivo.
+     No se agregó ningún parámetro nuevo, no se cambió el nombre de
+     ninguna función pública, no se tocó evaluarViento() ni
+     tipoBrisa(). index.html no requiere ningún cambio.
 
    QUÉ TOCA:
      Nada de DOM ni localStorage. Puras funciones de cálculo.
 
    FECHA:
-     13 jul 2026.
+     22 jul 2026.
 
    ESTADO:
-     NO_CONFIRMADO — correcciones aplicadas por lectura de código.
-     Pendiente de prueba real que confirme: (a) que un juego sin
-     orientación de parque real ya no dispara ningún cálculo con 45°
-     inventado, (b) que scoreMatch da un valor coherente cuando falta
-     un solo campo climático (sin colapsar a NaN ni sumar de más),
-     (c) que la comparación de venue por stadiumNorm(stadiumCanonName())
-     sigue emparejando los mismos históricos que antes, (d) que
-     tipoBrisa muestra "VELOCIDAD NO CONFIRMADA" cuando corresponde en
-     vez de tratar viento ausente como calma, y (e) que un valor null o
-     "" en cualquiera de los 6 campos (tempF, windMph, humidity, precip,
-     windDir, hpACF) efectivamente cae en la rama NO_CONFIRMADO y ya no
-     se cuela como 0 real.
+     Candado de trayectoria agregado y probado contra los 6 casos
+     mínimos pedidos (270° vs 271° en los 7 puntos: pasa; 358° vs 2°:
+     pasa por distancia circular de 4°; 270° vs 300° en un punto:
+     fuera; BRISA_ESTABLE vs BRISA_CAMBIANTE: fuera; velocidad con
+     más de 2 mph de diferencia en un punto: fuera; trayectoria
+     incompleta: fuera). Pendiente de que Perez lo corra contra datos
+     reales del histórico para confirmar que los similares que
+     aparecen ahora en index.html ya no incluyen falsos positivos de
+     dirección de viento.
    ============================================================ */
 
 window.MLBPRO_VIENTO = (function () {
@@ -137,7 +161,70 @@ window.MLBPRO_VIENTO = (function () {
     return Number.isFinite(Number(v));
   }
 
+  // Diferencia circular en grados: 358 vs 2 -> 4, nunca 356.
+  function diferenciaCircular(a, b) {
+    let d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
+  }
+
+  // Offsets exactos que debe traer una trayectoria para contar como
+  // "completa" para efectos de este candado.
+  const OFFSETS_CANDADO = [-2, -1, 0, 1, 2, 3, 4];
+
+  // Devuelve un Map(offset -> punto) SOLO si trayectoriaViento trae los
+  // 7 offsets exactos, cada uno con windFromDeg y windMph como número
+  // real. Si falta cualquiera, devuelve null (trayectoria incompleta,
+  // nunca se rellena ni se asume un valor neutral).
+  function trayectoriaCompleta(traj) {
+    if (!traj || !Array.isArray(traj.puntos)) return null;
+
+    const mapa = new Map();
+    traj.puntos.forEach(p => {
+      if (p && esNumeroReal(p.offsetHoras)) mapa.set(Number(p.offsetHoras), p);
+    });
+
+    for (const off of OFFSETS_CANDADO) {
+      const p = mapa.get(off);
+      if (!p || !esNumeroReal(p.windFromDeg) || !esNumeroReal(p.windMph)) return null;
+    }
+
+    return mapa;
+  }
+
+  // CANDADO DE TRAYECTORIA: ambos juegos deben tener trayectoria de 7
+  // puntos completa, misma clasificación exacta, y cada uno de los 7
+  // puntos dentro de ±5° circulares y ±2 mph. Un solo punto fuera de
+  // tolerancia invalida el histórico completo — sin promedios.
+  function trayectoriasCompatibles(today, h) {
+    const trajToday = today && today.trayectoriaViento;
+    const trajHist = h && h.trayectoriaViento;
+
+    if (!trajToday || !trajHist) return false;
+    if (!trajToday.clasificacion || trajToday.clasificacion !== trajHist.clasificacion) return false;
+
+    const mapaToday = trayectoriaCompleta(trajToday);
+    const mapaHist = trayectoriaCompleta(trajHist);
+    if (!mapaToday || !mapaHist) return false;
+
+    for (const off of OFFSETS_CANDADO) {
+      const pToday = mapaToday.get(off);
+      const pHist = mapaHist.get(off);
+
+      const dirDiff = diferenciaCircular(Number(pToday.windFromDeg), Number(pHist.windFromDeg));
+      if (dirDiff > 5) return false;
+
+      const velDiff = Math.abs(Number(pToday.windMph) - Number(pHist.windMph));
+      if (velDiff > 2) return false;
+    }
+
+    return true;
+  }
+
   function scoreMatch(today, h) {
+    // Candado obligatorio ANTES de cualquier cálculo climático. Si no
+    // pasa, el histórico queda fuera: 0, sin excepción.
+    if (!trayectoriasCompatibles(today, h)) return 0;
+
     let score = 0;
 
     if (esNumeroReal(today.tempF) && esNumeroReal(h.tempF)) {
@@ -195,6 +282,7 @@ window.MLBPRO_VIENTO = (function () {
 
   // Devuelve la categoría del viento respecto al parque, y si favorece
   // bateo (true), pitcheo (false), o es zona neutral/cruzada (null).
+  // SIN CAMBIOS en esta pasada.
   function evaluarViento(windDir, hpACFraw) {
     if (!esNumeroReal(windDir)) {
       return { categoria: "DIRECCIÓN NO CONFIRMADA", favoreceBateo: null, bearingDiff: null };
@@ -216,9 +304,7 @@ window.MLBPRO_VIENTO = (function () {
   }
 
   // Clasificación de "tipo de brisa" para la tarjeta del juego de hoy.
-  // Ajustada a la orientación real del parque (antes no lo estaba: usaba
-  // grados de compás absolutos NE-SE/SW-NW sin importar hacia dónde
-  // miraba el estadio, y por eso podía contradecir a evaluarViento()).
+  // SIN CAMBIOS en esta pasada.
   function tipoBrisa(today) {
     const venue = today?.venue;
 
