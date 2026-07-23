@@ -16,7 +16,9 @@
        parque tiene domo cerrado o techo no verificado antes de opinar
        sobre viento.
      getOrientacionParque() global (parques-orientacion.js) — para
-       saber hacia dónde mira cada parque (hpACF).
+       saber hacia dónde mira cada parque (hpACF). AHORA se llama DOS
+       veces por comparación: una para el parque de hoy y otra para
+       el parque del histórico (pueden ser parques distintos).
      Los cuatro deben estar cargados ANTES de que se llamen estas
      funciones (no antes de que se DEFINA el archivo — las llamadas a
      esas dependencias están dentro de las funciones, se resuelven en
@@ -41,109 +43,208 @@
        trayectoriaViento}. MISMA FIRMA Y MISMO FORMATO DE SALIDA que
        antes — index.html no necesita ningún cambio.
        ANTES de calcular cualquier punto de clima, se aplica el
-       CANDADO DE TRAYECTORIA (ver más abajo). Si el candado no pasa,
-       la función devuelve 0 de inmediato — el histórico queda fuera
-       de los similares, no puede aparecer con 98/99/100%, y no se
-       calcula ningún componente climático para él en esta llamada.
+       CANDADO DE TRAYECTORIA NORMALIZADA (ver más abajo). Si el
+       candado no pasa, la función devuelve 0 de inmediato — el
+       histórico queda fuera de los similares, no puede aparecer con
+       98/99/100%, y no se calcula ningún componente climático para
+       él en esta llamada.
        Si el candado SÍ pasa, se calcula el score climático exactamente
        igual que antes (temperatura/viento/humedad/precipitación/
-       parque/bearing-bonus), sin cambios en pesos ni umbrales. Cada
-       componente sigue sumando solo cuando AMBOS lados traen ese valor
-       como número real (esNumeroReal); si falta uno de los dos, ese
-       componente no aporta nada (no se inventa 0 ni se fuerza NaN). La
-       comparación de parque sigue usando
-       stadiumNorm(stadiumCanonName(...)) en ambos lados.
+       parque/bearing-bonus del windDir puntual), sin cambios en pesos
+       ni umbrales. Cada componente sigue sumando solo cuando AMBOS
+       lados traen ese valor como número real (esNumeroReal); si falta
+       uno de los dos, ese componente no aporta nada. La comparación
+       de parque sigue usando stadiumNorm(stadiumCanonName(...)) en
+       ambos lados. Ese bearing-bonus del bloque de windDir puntual es
+       un componente MÁS del score (no es el candado) y no se tocó en
+       esta pasada.
 
      evaluarViento(windDir, hpACF) → {categoria, favoreceBateo, bearingDiff}
        SIN CAMBIOS en esta pasada.
-       categoria: string para mostrar.
-       favoreceBateo: true | false | null (null = neutral/cruzado o sin dato).
-       Si windDir no es número real → "DIRECCIÓN NO CONFIRMADA".
-       Si hpACF no es número real → "ORIENTACIÓN NO CONFIRMADA" (ya no
-       se asume 45° por defecto).
-       Usado por evaluarMercados() en index.html para decidir OVER/UNDER.
 
-     tipoBrisa(today) → string. SIN CAMBIOS en esta pasada. today =
-       {venue, windMph, windDir}.
-       PRIMERO chequea roof-status.js (domo cerrado / techo no
-       verificado) antes de mirar el viento — ese orden importa, no
-       invertirlo. Si windMph no es número real → "VELOCIDAD NO
-       CONFIRMADA" (ya no se asume 0 mph). Devuelve: "ROOF CERRADO" |
-       "ROOF NO CONFIRMADO" | "VELOCIDAD NO CONFIRMADA" | "MUERTA" |
-       "TURBULENTA" | "CRUZADA" | "DIRECTA" | variantes
-       "/ DIRECCIÓN NO CONFIRMADA" | variantes
-       "/ ORIENTACIÓN NO CONFIRMADA" (mismos umbrales de mph que las
-       variantes de dirección, ya usados en el archivo: 12 y 7).
+     tipoBrisa(today) → string. SIN CAMBIOS en esta pasada.
 
-   CORRECCIÓN ACTUAL (esta sesión — candado de trayectoria de 7 puntos
-   en scoreMatch, ÚNICO cambio de esta pasada):
-     Antes, scoreMatch podía dar un score alto (incluso 98-100%) solo
-     por temperatura/humedad/velocidad parecidas, aunque la dirección
-     real del viento durante el juego fuera completamente distinta —
-     porque el bonus de bearing (parque) es un componente más entre
-     varios, no un filtro obligatorio. Ahora, ANTES de sumar cualquier
-     punto climático, scoreMatch exige que el histórico pase este
-     candado; si no lo pasa, devuelve 0 sin calcular nada más:
+   CORRECCIÓN ACTUAL (esta sesión — REDISEÑO COMPLETO del candado de
+   trayectoria, reemplaza el candado de ±5° circular fijo de la pasada
+   anterior; no es solo ampliar el número):
 
-     1. Ambos juegos (today y h) deben tener trayectoriaViento con
-        clasificación IGUAL exacta:
-          BRISA_ESTABLE solo empareja con BRISA_ESTABLE.
-          BRISA_CAMBIANTE solo empareja con BRISA_CAMBIANTE.
-          DIRECCION_NO_CONFIABLE solo empareja con
-          DIRECCION_NO_CONFIABLE.
-        Si falta trayectoriaViento en cualquiera de los dos lados, o
-        si las clasificaciones no coinciden exacto, el candado falla.
-     2. Ambos juegos deben tener trayectoriaViento.puntos con los 7
-        offsets EXACTOS [-2,-1,0,+1,+2,+3,+4], y cada uno de esos 7
-        puntos debe traer windFromDeg y windMph como números reales
-        (esNumeroReal) en AMBOS lados. Si falta cualquiera de los 7
-        puntos, o cualquiera trae dirección o velocidad no numérica,
-        la trayectoria se considera INCOMPLETA y el candado falla —
-        nunca se rellena un punto faltante ni se asume un valor
-        neutral.
-     3. Con los 7 puntos completos de ambos lados, se compara PUNTO
-        POR PUNTO (mismo offset contra mismo offset — esto ya
-        garantiza, sin lógica adicional, que para BRISA_CAMBIANTE el
-        recorrido completo se compare hora por hora y no solo el
-        punto inicial):
-          - diferencia CIRCULAR de dirección ≤ 5° (358° vs 2° = 4°,
-            nunca 356° — se usa min(|a-b|, 360-|a-b|));
-          - diferencia de velocidad ≤ 2 mph.
-        Si UN SOLO punto de los 7 falla cualquiera de las dos
-        condiciones, el candado falla para todo el histórico — no hay
-        promedio ni tolerancia acumulada, es candado por punto.
+     El candado anterior comparaba los 7 puntos de windFromDeg como
+     grados de compás CRUDOS, con una tolerancia fija de ±5° para
+     todos los casos. Eso tiene un problema real: dos parques con
+     orientación física distinta (hpACF distinto) pueden tener el
+     MISMO viento relativo al jardín/home (ej. "sale directo al
+     jardín central" en ambos) con grados de compás crudos totalmente
+     distintos — el candado anterior los habría descartado por error.
+     También trataba igual un desvío hacia los jardines que un desvío
+     hacia home, cuando físicamente no pesan igual (el viento que
+     entra hacia home es más sensible a un pequeño cambio de grado que
+     el que sale hacia jardines, por cómo se dispersa el aire en un
+     estadio abierto).
+
+     AHORA, para cada uno de los 7 puntos [-2,-1,0,+1,+2,+3,+4], en
+     AMBOS juegos por separado:
+       1. Se resuelve hpACF del parque de HOY (getOrientacionParque
+          (today.venue)) y, por separado, hpACF del parque del
+          HISTÓRICO (getOrientacionParque(h.venue)) — dos llamadas,
+          un parque puede no ser el mismo que el otro. Si CUALQUIERA
+          de los dos no es un número real (orientación no confirmada
+          para ese parque), el candado falla para todo el histórico —
+          nunca se asume una orientación por defecto.
+       2. Se NORMALIZA la dirección de cada punto respecto al hpACF de
+          SU PROPIO parque, con la misma fórmula ya usada en
+          evaluarViento(): opuesto = (hpACF + 180) % 360; ángulo
+          normalizado = diferencia CIRCULAR entre windFromDeg del
+          punto y ese opuesto. Este ángulo normalizado va de 0° a
+          180°: 0° = viento saliendo derecho hacia el jardín central
+          de ESE parque (favor bateo pleno); 180° = viento entrando
+          derecho hacia home de ESE parque (favor pitcheo pleno). Esto
+          pone a los dos juegos en la MISMA escala relativa al campo,
+          sin importar hacia qué punto cardinal absoluto mire cada
+          estadio.
+       3. Se comparan los DOS ángulos normalizados de ese punto (el de
+          hoy contra el del histórico) con una tolerancia que depende
+          de la ZONA del punto de HOY:
+            - Si el ángulo normalizado de HOY es ≤ 60° (abanico de
+              salida hacia jardines: de primera, pasando por right-
+              center-left, hasta tercera): tolerancia ±45°.
+            - Si el ángulo normalizado de HOY es > 60° (esto incluye
+              TANTO el viento lateral que cruza de primera a tercera
+              por delante de home, como el viento que entra derecho
+              hacia home): tolerancia ±30°.
+          DECISIÓN DE DISEÑO EXPLÍCITA: el corte de 60° NO es un
+          número nuevo inventado para este candado — es el mismo
+          umbral que evaluarViento() ya usa en este archivo para
+          decidir "SALE AL JARDÍN (FAVOR BATEO)" (diff<=60). Se
+          reutiliza aquí para no introducir un límite arbitrario
+          adicional. CORRECCIÓN sobre un intento anterior de esta
+          misma sesión: un corte binario en 90° metía el viento
+          lateral (perpendicular, cruzando de primera a tercera) en
+          el grupo de 45° junto con jardines — error real, porque
+          Perez especificó que SOLO el abanico que apunta al outfield
+          usa 45°, y todo lo demás —incluyendo el lateral— usa 30°.
+          Si Perez prefiere otro grado exacto para el borde del
+          abanico de jardines (distinto de 60°), hay que decirlo
+          explícitamente y se ajusta.
+       4. Se mantiene, sin cambios, la comparación de velocidad: la
+          diferencia de windMph de ese punto entre hoy y el histórico
+          debe ser ≤ 2 mph.
+       5. Se mantiene, sin cambios, que ambos juegos deben tener
+          trayectoriaViento.clasificacion IDÉNTICA (BRISA_ESTABLE con
+          BRISA_ESTABLE, BRISA_CAMBIANTE con BRISA_CAMBIANTE,
+          DIRECCION_NO_CONFIABLE con DIRECCION_NO_CONFIABLE), y que
+          ambos traigan los 7 puntos completos con windFromDeg y
+          windMph numéricos — una trayectoria incompleta excluye el
+          histórico igual que antes.
+     Si UN SOLO punto de los 7 falla el ángulo normalizado (fuera de
+     ±45°/±30° según su zona) o la velocidad (fuera de ±2 mph), el
+     candado falla para TODO el histórico — sin promedio, sin
+     tolerancia acumulada, candado por punto, exactamente como en la
+     pasada anterior.
      Si el candado pasa, el resto de scoreMatch (temperatura, viento
      puntual, humedad, precipitación, parque, bearing-bonus) se
-     conserva EXACTAMENTE igual que antes de esta pasada — no se
-     reemplazó la métrica climática, solo se le antepuso este filtro
-     obligatorio.
-     COMPATIBILIDAD: un histórico sin trayectoriaViento (o con
-     trayectoria incompleta) queda EXCLUIDO de esta coincidencia por
-     diseño — no se rompe nada del archivo, pero tampoco se inventa
-     una compatibilidad neutral para él. Esto es intencional: la
-     especificación pide excluir, no simular. Un juego de HOY sin
-     trayectoriaViento tampoco puede emparejar con ningún histórico
-     bajo este candado, por el mismo motivo.
-     No se agregó ningún parámetro nuevo, no se cambió el nombre de
-     ninguna función pública, no se tocó evaluarViento() ni
-     tipoBrisa(). index.html no requiere ningún cambio.
+     conserva EXACTAMENTE igual que en la pasada anterior — no se
+     tocó esa parte.
+     COMPATIBILIDAD: un histórico sin trayectoriaViento, con
+     trayectoria incompleta, o cuyo parque (o el de hoy) no tenga
+     orientación confirmada, queda EXCLUIDO de esta coincidencia por
+     diseño — no se rompe nada del archivo, no se inventa una
+     compatibilidad neutral. No se agregó ningún parámetro nuevo a
+     scoreMatch, no se cambió ningún nombre público, no se tocó
+     evaluarViento() ni tipoBrisa(). index.html no requiere cambio.
+     No se tocó mlbpro-core.js, index.html, ni ninguna caché o
+     histórico — solo este archivo.
+
+   CORRECCIÓN DE SEGUIMIENTO (misma sesión, sobre el bloque final de
+   windDir puntual dentro de scoreMatch, DESPUÉS del candado de 7
+   puntos): el candado de trayectoria ya normalizaba correctamente
+   cada lado con su propio hpACF, pero el bloque final que compara
+   today.windDir contra h.windDir (los 10 puntos de dirección + el
+   bonus de 5 del bearing) seguía comparando grados de compás CRUDOS
+   entre sí, y además usaba el hpACF del parque de HOY para
+   interpretar tanto el viento de hoy como el del histórico. Efecto
+   real: dos vientos físicamente idénticos (misma relación con su
+   propio jardín/home) en parques con orientación distinta pasaban el
+   candado de 7 puntos correctamente, pero luego este bloque les
+   restaba puntos de todas formas — el mismo error que ya se había
+   corregido arriba, pero que seguía vivo aquí.
+   Corregido: ahora se resuelve hpACF de today.venue y hpACF de
+   h.venue POR SEPARADO, cada dirección puntual se normaliza con
+   anguloRelativoParque() usando el hpACF de SU PROPIO parque (nunca
+   el hpACF de hoy para interpretar el histórico), y tanto los 10
+   puntos de dirección como el bonus de 5 se calculan sobre esos dos
+   ángulos normalizados. Si el hpACF de cualquiera de los dos parques
+   no es número real, este componente completo (10 + 5) no aporta
+   nada — antes, el bloque de 10 puntos se calculaba igual aunque no
+   hubiera hpACF disponible; ahora depende de que ambos hpACF existan,
+   porque ya no hay forma honesta de normalizar sin ellos.
+
+   SEGUNDA CORRECCIÓN DE SEGUIMIENTO (misma sesión — dos fallos reales
+   señalados por Perez sobre la normalización y el candado, corregidos
+   juntos):
+
+   1. EL LÍMITE DEL ABANICO DE JARDINES ERA 60°, DEBÍA SER 45°: el
+      terreno bueno desde primera hasta tercera abre ~90° completos
+      (primera = -45° relativo a center, tercera = +45°), así que el
+      abanico de jardines es hasta 45° desde center por cualquier
+      lado — no 60°. El 60° reutilizado de evaluarViento() en la
+      pasada anterior no correspondía a esta geometría; era una
+      reutilización de un umbral pensado para otro propósito
+      (categorizar "favor bateo" en evaluarViento, no delimitar el
+      abanico físico de jardines aquí). Corregido a 45°.
+
+   2. anguloRelativoParque() BORRABA LA DIFERENCIA ENTRE RIGHT Y LEFT:
+      la versión anterior devolvía una MAGNITUD plegada de 0° a 180°
+      (vía diferenciaCircular contra el opuesto), lo cual hacía que un
+      viento a 35° hacia right-center y uno a 35° hacia left-center
+      dieran EXACTAMENTE el mismo valor (35), como si fueran el mismo
+      viento — físicamente falso, son direcciones distintas. Corregido:
+      anguloRelativoParque() ahora devuelve un ángulo FIRMADO en rango
+      (-180, 180], que conserva de qué lado del campo viene el viento
+      (positivo de un lado, negativo del otro). La comparación entre
+      dos ángulos firmados usa diferenciaCircular() (ya existente) para
+      seguir siendo circular y correcta en los bordes (-179 vs 179 =
+      2°, no 358°). Con esta corrección, un viento a +35° y uno a -35°
+      dan una distancia circular real de 70° — ya no se confunden.
+
+   Como consecuencia de conservar el signo, el candado de zona también
+   se corrigió para no depender de un solo lado de la comparación:
+   ahora la tolerancia de 45° SOLO se aplica cuando AMBOS ángulos (el
+   de hoy Y el del histórico) tienen magnitud ≤45° (ambos dentro del
+   abanico de jardines); si cualquiera de los dos está fuera de ese
+   abanico —incluyendo el lateral que cruza de primera a tercera y la
+   entrada directa a home— se usa 30°. Esto hace el candado SIMÉTRICO:
+   invertir el orden de la comparación (hoy vs histórico, o histórico
+   vs hoy) da exactamente el mismo resultado — antes, con la zona
+   decidida solo por el ángulo de hoy, una comparación podía pasar en
+   un sentido y fallar al invertir los juegos, lo cual era un error
+   real de asimetría.
+   El mismo ángulo relativo firmado se aplicó también al bloque final
+   de windDir puntual (comparación circular sobre los ángulos
+   firmados, en vez de resta simple sobre valores plegados).
+   No se tocó ningún otro archivo. No se cambió ningún nombre público,
+   ni la firma de scoreMatch, ni evaluarViento(), ni tipoBrisa().
 
    QUÉ TOCA:
      Nada de DOM ni localStorage. Puras funciones de cálculo.
 
    FECHA:
-     22 jul 2026.
+     23 jul 2026.
 
    ESTADO:
-     Candado de trayectoria agregado y probado contra los 6 casos
-     mínimos pedidos (270° vs 271° en los 7 puntos: pasa; 358° vs 2°:
-     pasa por distancia circular de 4°; 270° vs 300° en un punto:
-     fuera; BRISA_ESTABLE vs BRISA_CAMBIANTE: fuera; velocidad con
-     más de 2 mph de diferencia en un punto: fuera; trayectoria
-     incompleta: fuera). Pendiente de que Perez lo corra contra datos
-     reales del histórico para confirmar que los similares que
-     aparecen ahora en index.html ya no incluyen falsos positivos de
-     dirección de viento.
+     Candado normalizado por parque, con ángulo firmado (conserva
+     right/left) y abanico de jardines de 45° desde center, probado
+     contra casos sintéticos: right (+35°) vs left (-35°) con misma
+     magnitud pero distancia circular real de 70° (debe excluir, ya
+     no se confunden); borde exacto del abanico en 45° (debe pasar);
+     un punto dentro del abanico y otro fuera (tolerancia baja a 30°,
+     ambos deben estar en jardines para 45°); simetría confirmada
+     (invertir el orden hoy/histórico da el mismo resultado); dos
+     parques con hpACF distinto y mismo ángulo firmado (debe pasar);
+     velocidad fuera de ±2 mph en un punto (debe excluir);
+     clasificación distinta (debe excluir); trayectoria incompleta
+     (debe excluir); orientación de parque no confirmada en cualquiera
+     de los dos lados (debe excluir). Pendiente de que Perez lo corra
+     contra datos reales del histórico.
    ============================================================ */
 
 window.MLBPRO_VIENTO = (function () {
@@ -165,6 +266,19 @@ window.MLBPRO_VIENTO = (function () {
   function diferenciaCircular(a, b) {
     let d = Math.abs(a - b) % 360;
     return d > 180 ? 360 - d : d;
+  }
+
+  // Ángulo relativo FIRMADO de un punto respecto al hpACF de SU PROPIO
+  // parque: 0° = viento saliendo derecho hacia center field de ESE
+  // parque; valores POSITIVOS y NEGATIVOS representan lados distintos
+  // del campo (right vs left) — NUNCA se pliega a magnitud 0-180°,
+  // porque eso borraba la diferencia entre un viento hacia right-
+  // center y uno hacia left-center (ambos daban la misma magnitud y
+  // parecían el mismo viento, lo cual es físicamente falso). Rango de
+  // salida: (-180, 180]. ±180 = viento entrando derecho hacia home.
+  function anguloRelativoParque(windFromDeg, hpACF) {
+    const opuesto = (hpACF + 180) % 360;
+    return ((windFromDeg - opuesto + 540) % 360) - 180;
   }
 
   // Offsets exactos que debe traer una trayectoria para contar como
@@ -191,10 +305,14 @@ window.MLBPRO_VIENTO = (function () {
     return mapa;
   }
 
-  // CANDADO DE TRAYECTORIA: ambos juegos deben tener trayectoria de 7
-  // puntos completa, misma clasificación exacta, y cada uno de los 7
-  // puntos dentro de ±5° circulares y ±2 mph. Un solo punto fuera de
-  // tolerancia invalida el histórico completo — sin promedios.
+  // CANDADO DE TRAYECTORIA NORMALIZADA: ambos juegos deben tener
+  // trayectoria de 7 puntos completa, misma clasificación exacta, y
+  // orientación de parque confirmada en AMBOS lados (pueden ser
+  // parques distintos). Cada uno de los 7 puntos se normaliza según
+  // el hpACF de su propio parque, y se compara con tolerancia ±45°
+  // (zona jardines, según el ángulo de HOY) o ±30° (zona home) más
+  // ±2 mph. Un solo punto fuera de tolerancia invalida el histórico
+  // completo — sin promedios.
   function trayectoriasCompatibles(today, h) {
     const trajToday = today && today.trayectoriaViento;
     const trajHist = h && h.trayectoriaViento;
@@ -206,12 +324,44 @@ window.MLBPRO_VIENTO = (function () {
     const mapaHist = trayectoriaCompleta(trajHist);
     if (!mapaToday || !mapaHist) return false;
 
+    const hpACFTodayRaw = (typeof getOrientacionParque !== "undefined")
+      ? getOrientacionParque(today.venue)
+      : null;
+    const hpACFHistRaw = (typeof getOrientacionParque !== "undefined")
+      ? getOrientacionParque(h.venue)
+      : null;
+
+    if (!esNumeroReal(hpACFTodayRaw) || !esNumeroReal(hpACFHistRaw)) return false;
+
+    const hpACFToday = Number(hpACFTodayRaw);
+    const hpACFHist = Number(hpACFHistRaw);
+
     for (const off of OFFSETS_CANDADO) {
       const pToday = mapaToday.get(off);
       const pHist = mapaHist.get(off);
 
-      const dirDiff = diferenciaCircular(Number(pToday.windFromDeg), Number(pHist.windFromDeg));
-      if (dirDiff > 5) return false;
+      const anguloToday = anguloRelativoParque(Number(pToday.windFromDeg), hpACFToday);
+      const anguloHist = anguloRelativoParque(Number(pHist.windFromDeg), hpACFHist);
+
+      // Abanico de jardines: hasta 45° circulares desde center field,
+      // por CUALQUIERA de los dos lados (right o left) — |ángulo|<=45.
+      // Fuera de eso es lateral (cruce de primera a tercera) u home.
+      // La tolerancia de 45° SOLO aplica si AMBOS puntos (hoy Y el
+      // histórico) caen dentro del abanico de jardines — si cualquiera
+      // de los dos está fuera, se usa 30°. Esto hace el candado
+      // SIMÉTRICO: invertir el orden de la comparación (hoy vs
+      // histórico, o histórico vs hoy) da el mismo resultado, porque
+      // ya no depende de la zona de un solo lado.
+      const zonaTodayJardines = Math.abs(anguloToday) <= 45;
+      const zonaHistJardines = Math.abs(anguloHist) <= 45;
+      const toleranciaGrados = (zonaTodayJardines && zonaHistJardines) ? 45 : 30;
+
+      // Comparación CIRCULAR sobre los ángulos ya firmados (conservan
+      // lado): un viento a +35° (right-center) y uno a -35° (left-
+      // center) dan una distancia circular real de 70°, no 0 — ya no
+      // se confunden entre sí.
+      const dirDiff = diferenciaCircular(anguloToday, anguloHist);
+      if (dirDiff > toleranciaGrados) return false;
 
       const velDiff = Math.abs(Number(pToday.windMph) - Number(pHist.windMph));
       if (velDiff > 2) return false;
@@ -256,24 +406,42 @@ window.MLBPRO_VIENTO = (function () {
       score += 15;
     }
 
+    // Bloque de dirección de viento puntual (windDir de hoy vs windDir
+    // del histórico, aparte de los 7 puntos de trayectoria que ya
+    // pasaron el candado arriba). CORREGIDO: ya NO se comparan
+    // today.windDir y h.windDir como grados de compás crudos, y ya NO
+    // se usa el hpACF de HOY para interpretar el viento del histórico
+    // — eso castigaba con score bajo a dos vientos físicamente
+    // idénticos (misma relación con su propio jardín/home) en parques
+    // con orientación distinta, justo el mismo error que ya se había
+    // corregido en el candado de 7 puntos pero que aquí seguía intacto.
+    // Ahora cada lado se normaliza con SU PROPIO hpACF, usando la
+    // misma anguloRelativoParque() ya definida arriba, y tanto los 10
+    // puntos de dirección como el bonus de 5 se calculan sobre esos
+    // dos ángulos normalizados. Si el hpACF de cualquiera de los dos
+    // parques no es un número real, este componente completo (10 + 5)
+    // no aporta nada — no se inventa una orientación por defecto ni se
+    // vuelve a comparar en crudo como respaldo.
     if (esNumeroReal(today.windDir) && esNumeroReal(h.windDir)) {
-      const td = Number(today.windDir);
-      const hd = Number(h.windDir);
-
-      let dd = Math.abs(td - hd);
-      if (dd > 180) dd = 360 - dd;
-      score += Math.max(0, 10 - (dd / 18));
-
-      const hpACFraw = (typeof getOrientacionParque !== "undefined")
+      const hpACFTodayDirRaw = (typeof getOrientacionParque !== "undefined")
         ? getOrientacionParque(today.venue)
         : null;
+      const hpACFHistDirRaw = (typeof getOrientacionParque !== "undefined")
+        ? getOrientacionParque(h.venue)
+        : null;
 
-      if (esNumeroReal(hpACFraw)) {
-        const hpACF = Number(hpACFraw);
-        const todayBearingDiff = Math.abs(((td - hpACF + 360) % 360) - 180);
-        const histBearingDiff = Math.abs(((hd - hpACF + 360) % 360) - 180);
+      if (esNumeroReal(hpACFTodayDirRaw) && esNumeroReal(hpACFHistDirRaw)) {
+        const anguloTodayDir = anguloRelativoParque(Number(today.windDir), Number(hpACFTodayDirRaw));
+        const anguloHistDir = anguloRelativoParque(Number(h.windDir), Number(hpACFHistDirRaw));
 
-        if (Math.abs(todayBearingDiff - histBearingDiff) < 40) score += 5;
+        // Comparación CIRCULAR sobre los ángulos firmados (misma
+        // dirección relativa que ahora conserva right/left): una resta
+        // simple podría dar un valor erróneo en el borde (-179 vs 179
+        // son 2° de distancia real, no 358).
+        const dd = diferenciaCircular(anguloTodayDir, anguloHistDir);
+        score += Math.max(0, 10 - (dd / 18));
+
+        if (dd < 40) score += 5;
       }
     }
 
