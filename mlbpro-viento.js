@@ -16,11 +16,10 @@
        parque tiene domo cerrado o techo no verificado antes de opinar
        sobre viento.
      getOrientacionParque() global (parques-orientacion.js) — para
-       saber hacia dónde mira cada parque (hpACF). Se llama DOS veces
-       por comparación cuando aplica: una para el parque de hoy y otra
-       para el parque del histórico (pueden ser parques distintos).
-       NO se llama en absoluto cuando la clasificación de trayectoria
-       es DIRECCION_NO_CONFIABLE (ver CORRECCIÓN DE ESTA PASADA).
+       saber hacia dónde mira cada parque (hpACF). Se llama a lo sumo
+       una vez por lado (hoy / histórico) dentro de evaluarTrayectoria()
+       cuando la clasificación no es DIRECCION_NO_CONFIABLE, y otra vez
+       en el bloque de dirección puntual de scoreMatch() (sin cambios).
      Los cuatro deben estar cargados ANTES de que se llamen estas
      funciones (no antes de que se DEFINA el archivo — las llamadas a
      esas dependencias están dentro de las funciones, se resuelven en
@@ -44,101 +43,127 @@
        {tempF, windMph, humidity, precip, venue, windDir,
        trayectoriaViento}. MISMA FIRMA Y MISMO FORMATO DE SALIDA que
        antes.
-       ANTES de calcular cualquier punto de clima, se aplica el
-       CANDADO DE TRAYECTORIA (ver más abajo). Si el candado no pasa,
-       la función devuelve 0 de inmediato — el histórico queda fuera
-       de los similares, y no se calcula ningún componente climático
-       para él en esta llamada.
-       Si el candado SÍ pasa, se calcula el score climático exactamente
-       igual que en la pasada anterior (temperatura/viento/humedad/
-       precipitación/parque/bearing-bonus del windDir puntual), sin
-       cambios en pesos ni umbrales. Cada componente sigue sumando
-       solo cuando AMBOS lados traen ese valor como número real
-       (esNumeroReal); si falta uno de los dos, ese componente no
-       aporta nada. La comparación de parque sigue usando
-       stadiumNorm(stadiumCanonName(...)) en ambos lados. Ese
-       bearing-bonus del bloque de windDir puntual es un componente
-       MÁS del score (no es el candado) y no se tocó en esta pasada.
+       ANTES de calcular cualquier punto de clima, se evalúa la
+       trayectoria con evaluarTrayectoria() (ver CORRECCIÓN DE ESTA
+       PASADA). Si evalTraj.compatible es false, la función devuelve 0
+       de inmediato — el histórico queda fuera de los similares. Si es
+       true, se calcula el score climático EXACTAMENTE igual que en
+       la pasada anterior al arreglo de trayectoria flexible: los
+       mismos componentes (temperatura/viento/humedad/precipitación/
+       parque/bearing-bonus del windDir puntual), los mismos pesos,
+       los mismos umbrales. La evaluación de trayectoria funciona
+       ÚNICAMENTE como candado de entrada (pasa o no pasa) — no aporta
+       ni resta ningún punto al score. El máximo teórico del score es
+       idéntico al del archivo original.
 
      evaluarViento(windDir, hpACF) → {categoria, favoreceBateo, bearingDiff}
        SIN CAMBIOS en esta pasada.
 
      tipoBrisa(today) → string. SIN CAMBIOS en esta pasada.
 
-   CORRECCIÓN DE ESTA PASADA (23 jul 2026) — EXCEPCIÓN PARA
-   DIRECCION_NO_CONFIABLE EN trayectoriasCompatibles():
+   CORRECCIÓN DE ESTA PASADA (27 jul 2026) — TRAYECTORIA FLEXIBLE
+   POR COBERTURA PARCIAL:
 
-     Antes de esta pasada, trayectoriasCompatibles() aplicaba el MISMO
-     candado angular (orientación de parque obligatoria + ángulo
-     normalizado ±45°/±30°) a las tres clasificaciones posibles de
-     trayectoriaViento.clasificacion: BRISA_ESTABLE, BRISA_CAMBIANTE, y
-     DIRECCION_NO_CONFIABLE. Eso era incorrecto para el tercer caso:
-     DIRECCION_NO_CONFIABLE significa, por definición, que la
-     dirección de viento en esos 7 puntos NO es confiable. Exigir
-     orientación de parque y comparar un ángulo normalizado calculado
-     sobre una dirección que la propia trayectoria ya marcó como no
-     confiable no aporta ninguna señal real, y en la práctica dejaba
-     este caso en score 0 casi siempre — descartando de los similares
-     históricos juegos que sí eran comparables en velocidad, solo
-     porque su dirección (ya sabida como no confiable) no calzaba
-     dentro de la tolerancia angular.
+     PROBLEMA: el candado anterior exigía los 7 offsets completos
+     [-2,-1,0,+1,+2,+3,+4] con windFromDeg y windMph numéricos en
+     AMBOS lados, y un solo punto fuera de tolerancia (velocidad o
+     dirección) descartaba el histórico completo con score 0. En la
+     práctica esto vaciaba Coincidencia casi siempre: bastaba con que
+     faltara un dato horario o que un solo punto de 7 no calzara para
+     perder un histórico que en el resto de sus puntos sí era
+     comparable.
 
-     AHORA trayectoriasCompatibles() separa el caso:
-       - Si trajToday.clasificacion === "DIRECCION_NO_CONFIABLE" (y,
-         por la verificación de clasificación idéntica que ya existía,
-         trajHist.clasificacion también lo es): el candado se reduce a
-           1. mismos 7 offsets completos, con windFromDeg y windMph
-              numéricos en ambos lados (verificación ya existente,
-              sin cambios — se sigue usando trayectoriaCompleta()).
-           2. clasificación idéntica entre hoy e histórico
-              (verificación ya existente, sin cambios).
-           3. diferencia de windMph ≤ 2 mph en CADA uno de los 7
-              puntos.
-         NO se exige orientación de parque confirmada, NO se llama a
-         getOrientacionParque() para ninguno de los dos lados, NO se
-         calcula anguloRelativoParque(), y NO se compara dirDiff en
-         absoluto para este caso. Si los 7 puntos cumplen la
-         velocidad, el candado pasa.
-       - Para BRISA_ESTABLE y BRISA_CAMBIANTE: el candado angular
-         completo (orientación de parque obligatoria en ambos lados,
-         ángulo normalizado firmado por parque propio, tolerancia
-         ±45° cuando ambos ángulos están dentro del abanico de
-         jardines o ±30° en cualquier otro caso, más velocidad ≤2 mph
-         por punto) se conserva EXACTAMENTE igual que en la pasada
-         anterior — ninguna línea de esa rama cambió.
-     El resto de trayectoriasCompatibles() (validación de trajToday/
-     trajHist presentes, clasificación idéntica, trayectoria completa
-     en ambos lados) no cambió. scoreMatch(), evaluarViento(),
-     tipoBrisa(), anguloRelativoParque(), diferenciaCircular(),
-     esNumeroReal(), trayectoriaCompleta() no se tocaron. No se
-     cambió ningún nombre público ni la firma de ninguna función. No
-     se tocó ningún otro archivo.
+     AHORA el candado se reemplaza por evaluarTrayectoria(today, h),
+     que:
+       1. Ya NO exige los 7 offsets completos. Construye un mapa por
+          lado con construirMapaTrayectoria(), que toma cada punto de
+          trayectoriaViento.puntos que tenga offsetHoras y windMph
+          como número real (esNumeroReal) — sin exigir windFromDeg en
+          esta etapa, porque el caso DIRECCION_NO_CONFIABLE nunca lo
+          necesita. No se inventa ni se rellena ningún punto faltante.
+       2. Calcula los offsetsCompartidos = offsets presentes en AMBOS
+          mapas (solo esos se comparan; los que solo tiene uno de los
+          dos lados no participan).
+       3. Exige cobertura mínima: si offsetsCompartidos.length < 4,
+          devuelve estado "COBERTURA_INSUFICIENTE" y compatible=false
+          — no hay suficiente base real para comparar, así que no se
+          inventa una.
+       4. Si trajToday.clasificacion es DIRECCION_NO_CONFIABLE (y por
+          la verificación de clasificación idéntica, trajHist también
+          lo es): NO exige orientación de parque, NO llama a
+          getOrientacionParque(), NO calcula ángulo ni compara
+          dirección — evalúa cada offset compartido solo por
+          diferencia de windMph (≤2 mph = compatible en ese punto).
+       5. Si es BRISA_ESTABLE o BRISA_CAMBIANTE: exige orientación de
+          parque confirmada en AMBOS lados (si falta, estado
+          "ORIENTACION_NO_CONFIRMADA", compatible=false — igual que
+          antes, pero ahora evaluado una sola vez por comparación, no
+          por punto). Para cada offset compartido que además traiga
+          windFromDeg real en ambos lados, normaliza con
+          anguloRelativoParque() (conserva right/left, SIN CAMBIOS),
+          aplica la MISMA tolerancia que antes (45° si ambos ángulos
+          caen en el abanico de jardines ±45°, si no 30°) más ≤2 mph,
+          y cuenta ese punto como compatible o no. Un punto compartido
+          sin windFromDeg real en algún lado cuenta como compartido
+          pero NO como compatible (no se asume compatibilidad sin
+          dato).
+       6. YA NO descarta el histórico por un solo punto fuera de
+          rango. En vez de eso, calcula
+          proporcionCompatible = puntosCompatibles / puntosCompartidos
+          y exige proporcionCompatible >= 0.6 (mayoría clara) para
+          que compatible sea true. Esto es lo que reemplaza la regla
+          "un punto malo tumba todo".
+       7. Devuelve un objeto de evaluación completo — NO solo
+          true/false — con: puntosCompartidos, puntosCompatibles,
+          cobertura, proporcionCompatible, diferenciaPromedioVelocidad,
+          estado ("SIN_TRAYECTORIA" | "CLASIFICACION_DISTINTA" |
+          "COBERTURA_INSUFICIENTE" | "ORIENTACION_NO_CONFIRMADA" |
+          "COMPATIBLE" | "INCOMPATIBLE") y compatible (boolean). Este
+          objeto se usa SOLO para decidir compatible true/false dentro
+          de scoreMatch() — sus campos numéricos (proporcionCompatible,
+          diferenciaPromedioVelocidad, etc.) NO se suman al score ni
+          modifican ningún peso existente.
 
-   ESTADO ANTERIOR (pasadas previas, ya vigente y sin cambios en esta
-   pasada): candado normalizado por parque para BRISA_ESTABLE y
-   BRISA_CAMBIANTE, con ángulo firmado (conserva right/left) y
-   abanico de jardines de 45° desde center, probado contra casos
-   sintéticos: right (+35°) vs left (-35°) con misma magnitud pero
-   distancia circular real de 70° (excluye correctamente); borde
-   exacto del abanico en 45° (pasa); simetría confirmada (invertir el
-   orden hoy/histórico da el mismo resultado); dos parques con hpACF
-   distinto y mismo ángulo firmado (pasa); velocidad fuera de ±2 mph
-   en un punto (excluye); clasificación distinta (excluye);
-   trayectoria incompleta (excluye); orientación de parque no
-   confirmada en cualquiera de los dos lados (excluye, solo aplica a
-   BRISA_ESTABLE/BRISA_CAMBIANTE desde esta pasada).
+     Los pesos y cálculos de temperatura, viento, humedad,
+     precipitación, bonus de parque, y el bloque de dirección puntual
+     (windDir de hoy vs windDir del histórico) NO se tocaron — son
+     línea por línea los mismos que en el archivo original, y el
+     máximo teórico de scoreMatch() (antes de Math.min(100, ...)) es
+     el mismo que en el archivo original. anguloRelativoParque(),
+     diferenciaCircular(), esNumeroReal(), evaluarViento(),
+     tipoBrisa() no se tocaron. No se cambió ningún nombre público ni
+     la firma de ninguna función pública. No se tocó ningún otro
+     archivo.
+
+     Las funciones trayectoriaCompleta() y trayectoriasCompatibles()
+     de la pasada anterior se ELIMINARON (eran internas, no forman
+     parte de la API pública) y se reemplazan por
+     construirMapaTrayectoria() y evaluarTrayectoria().
+
+   ESTADO ANTERIOR (pasada del 23 jul 2026, ahora reemplazado):
+     candado rígido de 7 puntos completos, sin cobertura parcial, sin
+     objeto de evaluación, un solo punto fuera de tolerancia
+     descartaba el histórico completo.
+
+   CORRECCIÓN SOBRE LA PASADA ANTERIOR (misma fecha, 27 jul 2026):
+     La primera versión de este arreglo agregaba un bono no
+     autorizado al score (score += proporcionCompatible * 10). Ese
+     bono se ELIMINÓ por completo. evaluarTrayectoria() ahora se usa
+     ÚNICAMENTE como candado de entrada — decide si el histórico se
+     calcula o no, pero no aporta ni resta ningún punto al score.
 
    QUÉ TOCA:
      Nada de DOM ni localStorage. Puras funciones de cálculo.
 
    FECHA:
-     23 jul 2026.
+     27 jul 2026.
 
    ESTADO:
      Pendiente de que Perez lo corra contra datos reales del
-     histórico, en particular juegos clasificados como
-     DIRECCION_NO_CONFIABLE, para confirmar que ahora sí producen
-     coincidencias por velocidad cuando corresponde.
+     histórico para confirmar que Coincidencia vuelve a mostrar
+     resultados con cobertura parcial de trayectoria, y que
+     DIRECCION_NO_CONFIABLE ya no se descarta por falta de los 7
+     puntos completos.
    ============================================================ */
 
 window.MLBPRO_VIENTO = (function () {
@@ -175,122 +200,183 @@ window.MLBPRO_VIENTO = (function () {
     return ((windFromDeg - opuesto + 540) % 360) - 180;
   }
 
-  // Offsets exactos que debe traer una trayectoria para contar como
-  // "completa" para efectos de este candado.
+  // Offsets posibles de una trayectoria de 7 puntos. Ya NO se exige
+  // que estén todos presentes — solo se usan los que sí existen en
+  // ambos lados (offsetsCompartidos dentro de evaluarTrayectoria()).
   const OFFSETS_CANDADO = [-2, -1, 0, 1, 2, 3, 4];
 
-  // Devuelve un Map(offset -> punto) SOLO si trayectoriaViento trae los
-  // 7 offsets exactos, cada uno con windFromDeg y windMph como número
-  // real. Si falta cualquiera, devuelve null (trayectoria incompleta,
-  // nunca se rellena ni se asume un valor neutral).
-  function trayectoriaCompleta(traj) {
-    if (!traj || !Array.isArray(traj.puntos)) return null;
+  // Cobertura mínima real para poder comparar trayectorias, y
+  // proporción mínima de puntos compartidos que deben salir
+  // compatibles para que el histórico no se descarte. Esta pasada
+  // reemplaza el candado rígido de "los 7 completos, un punto malo
+  // tumba todo" por estos dos umbrales explícitos.
+  const MIN_PUNTOS_COMPARTIDOS = 4;
+  const MIN_PROPORCION_COMPATIBLE = 0.6;
 
+  // Construye un Map(offset -> punto) con los puntos de
+  // trayectoriaViento.puntos que traigan offsetHoras y windMph como
+  // número real. NO exige windFromDeg aquí (eso se evalúa punto por
+  // punto más abajo, solo cuando la clasificación lo requiere). NO se
+  // rellena ni se inventa ningún offset faltante.
+  function construirMapaTrayectoria(traj) {
     const mapa = new Map();
-    traj.puntos.forEach(p => {
-      if (p && esNumeroReal(p.offsetHoras)) mapa.set(Number(p.offsetHoras), p);
-    });
+    if (!traj || !Array.isArray(traj.puntos)) return mapa;
 
-    for (const off of OFFSETS_CANDADO) {
-      const p = mapa.get(off);
-      if (!p || !esNumeroReal(p.windFromDeg) || !esNumeroReal(p.windMph)) return null;
-    }
+    traj.puntos.forEach(p => {
+      if (p && esNumeroReal(p.offsetHoras) && esNumeroReal(p.windMph)) {
+        mapa.set(Number(p.offsetHoras), p);
+      }
+    });
 
     return mapa;
   }
 
-  // CANDADO DE TRAYECTORIA: ambos juegos deben tener trayectoria de 7
-  // puntos completa y misma clasificación exacta.
+  // Evalúa la compatibilidad de trayectoria entre hoy y un histórico.
+  // Devuelve un objeto de evaluación completo (no solo true/false):
+  //   { puntosCompartidos, puntosCompatibles, cobertura,
+  //     proporcionCompatible, diferenciaPromedioVelocidad, estado,
+  //     compatible }
+  // Este objeto se usa SOLO como candado de entrada en scoreMatch()
+  // (evalTraj.compatible). Sus campos numéricos no se suman al score.
   //
-  // CASO DIRECCION_NO_CONFIABLE (esta pasada): la dirección de esos 7
-  // puntos ya está marcada como no confiable por definición, así que
-  // el candado NO exige orientación de parque ni compara ángulo — se
-  // reduce a velocidad ≤ ±2 mph por punto.
+  // CASO DIRECCION_NO_CONFIABLE: solo compara velocidad (≤2 mph) en
+  // los offsets compartidos. No exige orientación de parque, no
+  // calcula ángulo, no compara dirección.
   //
-  // CASO BRISA_ESTABLE / BRISA_CAMBIANTE (sin cambios): orientación de
-  // parque confirmada en AMBOS lados (pueden ser parques distintos),
-  // cada uno de los 7 puntos normalizado según el hpACF de su propio
-  // parque, comparado con tolerancia ±45° (zona jardines, según el
-  // ángulo de HOY) o ±30° (zona home) más ±2 mph. Un solo punto fuera
-  // de tolerancia invalida el histórico completo — sin promedios.
-  function trayectoriasCompatibles(today, h) {
+  // CASO BRISA_ESTABLE / BRISA_CAMBIANTE: exige orientación de parque
+  // confirmada en ambos lados (una sola vez, no por punto). Cada
+  // offset compartido que además tenga windFromDeg real en ambos
+  // lados se normaliza con anguloRelativoParque() y se compara con la
+  // MISMA tolerancia que antes (45°/30° según abanico de jardines,
+  // más ≤2 mph). Un offset sin windFromDeg real cuenta como
+  // compartido pero no como compatible.
+  //
+  // En ambos casos: ya no basta un solo punto fuera de rango para
+  // descartar el histórico. Se exige cobertura mínima
+  // (MIN_PUNTOS_COMPARTIDOS) y una proporción mínima de puntos
+  // compatibles (MIN_PROPORCION_COMPATIBLE).
+  function evaluarTrayectoria(today, h) {
     const trajToday = today && today.trayectoriaViento;
     const trajHist = h && h.trayectoriaViento;
 
-    if (!trajToday || !trajHist) return false;
-    if (!trajToday.clasificacion || trajToday.clasificacion !== trajHist.clasificacion) return false;
+    const base = {
+      puntosCompartidos: 0,
+      puntosCompatibles: 0,
+      cobertura: 0,
+      proporcionCompatible: 0,
+      diferenciaPromedioVelocidad: null,
+      estado: "SIN_TRAYECTORIA",
+      compatible: false
+    };
 
-    const mapaToday = trayectoriaCompleta(trajToday);
-    const mapaHist = trayectoriaCompleta(trajHist);
-    if (!mapaToday || !mapaHist) return false;
+    if (!trajToday || !trajHist) return base;
 
-    // CASO ESPECIAL: DIRECCION_NO_CONFIABLE. La clasificación idéntica
-    // ya se verificó arriba, así que si trajToday cae acá, trajHist
-    // también. No se pide orientación del parque, no se calcula
-    // anguloRelativoParque(), no se compara dirDiff — solo velocidad.
-    if (trajToday.clasificacion === "DIRECCION_NO_CONFIABLE") {
-      for (const off of OFFSETS_CANDADO) {
-        const pToday = mapaToday.get(off);
-        const pHist = mapaHist.get(off);
-
-        const velDiff = Math.abs(Number(pToday.windMph) - Number(pHist.windMph));
-        if (velDiff > 2) return false;
-      }
-      return true;
+    if (!trajToday.clasificacion || trajToday.clasificacion !== trajHist.clasificacion) {
+      return { ...base, estado: "CLASIFICACION_DISTINTA" };
     }
 
-    // BRISA_ESTABLE y BRISA_CAMBIANTE: candado angular completo, sin
-    // cambios respecto a la pasada anterior.
-    const hpACFTodayRaw = (typeof getOrientacionParque !== "undefined")
-      ? getOrientacionParque(today.venue)
-      : null;
-    const hpACFHistRaw = (typeof getOrientacionParque !== "undefined")
-      ? getOrientacionParque(h.venue)
-      : null;
+    const mapaToday = construirMapaTrayectoria(trajToday);
+    const mapaHist = construirMapaTrayectoria(trajHist);
 
-    if (!esNumeroReal(hpACFTodayRaw) || !esNumeroReal(hpACFHistRaw)) return false;
+    const offsetsCompartidos = OFFSETS_CANDADO.filter(
+      off => mapaToday.has(off) && mapaHist.has(off)
+    );
 
-    const hpACFToday = Number(hpACFTodayRaw);
-    const hpACFHist = Number(hpACFHistRaw);
+    if (offsetsCompartidos.length < MIN_PUNTOS_COMPARTIDOS) {
+      return {
+        ...base,
+        puntosCompartidos: offsetsCompartidos.length,
+        cobertura: offsetsCompartidos.length,
+        estado: "COBERTURA_INSUFICIENTE"
+      };
+    }
 
-    for (const off of OFFSETS_CANDADO) {
+    const esNoConfiable = trajToday.clasificacion === "DIRECCION_NO_CONFIABLE";
+
+    let hpACFToday = null;
+    let hpACFHist = null;
+
+    if (!esNoConfiable) {
+      const hpACFTodayRaw = (typeof getOrientacionParque !== "undefined")
+        ? getOrientacionParque(today.venue)
+        : null;
+      const hpACFHistRaw = (typeof getOrientacionParque !== "undefined")
+        ? getOrientacionParque(h.venue)
+        : null;
+
+      if (!esNumeroReal(hpACFTodayRaw) || !esNumeroReal(hpACFHistRaw)) {
+        return {
+          ...base,
+          puntosCompartidos: offsetsCompartidos.length,
+          cobertura: offsetsCompartidos.length,
+          estado: "ORIENTACION_NO_CONFIRMADA"
+        };
+      }
+
+      hpACFToday = Number(hpACFTodayRaw);
+      hpACFHist = Number(hpACFHistRaw);
+    }
+
+    let puntosCompatibles = 0;
+    let sumaDiferenciaVelocidad = 0;
+
+    offsetsCompartidos.forEach(off => {
       const pToday = mapaToday.get(off);
       const pHist = mapaHist.get(off);
+
+      const velDiff = Math.abs(Number(pToday.windMph) - Number(pHist.windMph));
+      sumaDiferenciaVelocidad += velDiff;
+
+      if (esNoConfiable) {
+        if (velDiff <= 2) puntosCompatibles++;
+        return;
+      }
+
+      // BRISA_ESTABLE / BRISA_CAMBIANTE: sin windFromDeg real en
+      // ambos lados de este punto, no se puede evaluar dirección —
+      // cuenta como compartido pero no como compatible.
+      if (!esNumeroReal(pToday.windFromDeg) || !esNumeroReal(pHist.windFromDeg)) return;
 
       const anguloToday = anguloRelativoParque(Number(pToday.windFromDeg), hpACFToday);
       const anguloHist = anguloRelativoParque(Number(pHist.windFromDeg), hpACFHist);
 
       // Abanico de jardines: hasta 45° circulares desde center field,
-      // por CUALQUIERA de los dos lados (right o left) — |ángulo|<=45.
-      // Fuera de eso es lateral (cruce de primera a tercera) u home.
-      // La tolerancia de 45° SOLO aplica si AMBOS puntos (hoy Y el
-      // histórico) caen dentro del abanico de jardines — si cualquiera
-      // de los dos está fuera, se usa 30°. Esto hace el candado
-      // SIMÉTRICO: invertir el orden de la comparación (hoy vs
-      // histórico, o histórico vs hoy) da el mismo resultado, porque
-      // ya no depende de la zona de un solo lado.
+      // por CUALQUIERA de los dos lados. La tolerancia de 45° SOLO
+      // aplica si AMBOS puntos caen dentro del abanico; si no, 30°.
+      // SIN CAMBIOS respecto a la pasada anterior.
       const zonaTodayJardines = Math.abs(anguloToday) <= 45;
       const zonaHistJardines = Math.abs(anguloHist) <= 45;
       const toleranciaGrados = (zonaTodayJardines && zonaHistJardines) ? 45 : 30;
 
-      // Comparación CIRCULAR sobre los ángulos ya firmados (conservan
-      // lado): un viento a +35° (right-center) y uno a -35° (left-
-      // center) dan una distancia circular real de 70°, no 0 — ya no
-      // se confunden entre sí.
       const dirDiff = diferenciaCircular(anguloToday, anguloHist);
-      if (dirDiff > toleranciaGrados) return false;
 
-      const velDiff = Math.abs(Number(pToday.windMph) - Number(pHist.windMph));
-      if (velDiff > 2) return false;
-    }
+      if (dirDiff <= toleranciaGrados && velDiff <= 2) puntosCompatibles++;
+    });
 
-    return true;
+    const proporcionCompatible = puntosCompatibles / offsetsCompartidos.length;
+    const diferenciaPromedioVelocidad = sumaDiferenciaVelocidad / offsetsCompartidos.length;
+    const compatible = proporcionCompatible >= MIN_PROPORCION_COMPATIBLE;
+
+    return {
+      puntosCompartidos: offsetsCompartidos.length,
+      puntosCompatibles,
+      cobertura: offsetsCompartidos.length,
+      proporcionCompatible,
+      diferenciaPromedioVelocidad,
+      estado: compatible ? "COMPATIBLE" : "INCOMPATIBLE",
+      compatible
+    };
   }
 
   function scoreMatch(today, h) {
-    // Candado obligatorio ANTES de cualquier cálculo climático. Si no
-    // pasa, el histórico queda fuera: 0, sin excepción.
-    if (!trayectoriasCompatibles(today, h)) return 0;
+    // Evaluación de trayectoria (reemplaza el candado rígido anterior).
+    // Funciona ÚNICAMENTE como candado de entrada: si no es
+    // compatible (cobertura insuficiente, orientación no confirmada
+    // cuando se requiere, clasificación distinta, o proporción de
+    // puntos compatibles por debajo del mínimo), el histórico queda
+    // fuera: 0, sin excepción. No aporta ningún punto al score.
+    const evalTraj = evaluarTrayectoria(today, h);
+    if (!evalTraj.compatible) return 0;
 
     let score = 0;
 
@@ -324,15 +410,8 @@ window.MLBPRO_VIENTO = (function () {
     }
 
     // Bloque de dirección de viento puntual (windDir de hoy vs windDir
-    // del histórico, aparte de los 7 puntos de trayectoria que ya
-    // pasaron el candado arriba). Cada lado se normaliza con SU PROPIO
-    // hpACF, usando la misma anguloRelativoParque() ya definida
-    // arriba, y tanto los 10 puntos de dirección como el bonus de 5 se
-    // calculan sobre esos dos ángulos normalizados. Si el hpACF de
-    // cualquiera de los dos parques no es un número real, este
-    // componente completo (10 + 5) no aporta nada — no se inventa una
-    // orientación por defecto ni se vuelve a comparar en crudo como
-    // respaldo. SIN CAMBIOS en esta pasada.
+    // del histórico, aparte de los offsets de trayectoria evaluados
+    // arriba). SIN CAMBIOS en esta pasada.
     if (esNumeroReal(today.windDir) && esNumeroReal(h.windDir)) {
       const hpACFTodayDirRaw = (typeof getOrientacionParque !== "undefined")
         ? getOrientacionParque(today.venue)
@@ -345,10 +424,6 @@ window.MLBPRO_VIENTO = (function () {
         const anguloTodayDir = anguloRelativoParque(Number(today.windDir), Number(hpACFTodayDirRaw));
         const anguloHistDir = anguloRelativoParque(Number(h.windDir), Number(hpACFHistDirRaw));
 
-        // Comparación CIRCULAR sobre los ángulos firmados (misma
-        // dirección relativa que conserva right/left): una resta
-        // simple podría dar un valor erróneo en el borde (-179 vs 179
-        // son 2° de distancia real, no 358).
         const dd = diferenciaCircular(anguloTodayDir, anguloHistDir);
         score += Math.max(0, 10 - (dd / 18));
 
