@@ -40,7 +40,7 @@ button:disabled{opacity:.5}
 <button onclick="generarConclusionCoincidencia()">CONCLUSIÓN DE COINCIDENCIA</button>
 <button onclick="borrarCacheHistorico()" style="background:#da3633;color:#fff;">🗑️ BORRAR CACHE HISTÓRICO</button>
 
-<div id="estado">Listo.</div>
+<div id="estado">NO SUBIR TODAVÍA</div>
 <div id="lista"></div>
 
 <script src="estadios.js"></script>
@@ -98,34 +98,58 @@ button:disabled{opacity:.5}
      construye su propia lista por separado. Hace, en este orden:
        1. Calcula la clave canónica del parque de hoy:
           stadiumNorm(stadiumCanonName(today.venue)).
-       2. Filtra hist EXCLUSIVAMENTE al mismo parque canónico:
-          stadiumNorm(stadiumCanonName(h.venue)) === esa clave.
-       3. Sobre ese subconjunto (y solo sobre ese subconjunto) corre
-          VIENTO.scoreMatch(today, h) — mlbpro-viento.js no se tocó,
-          solo se llama.
-       4. Descarta todo resultado con score <= 0.
-       5. Ordena de mayor a menor.
-       6. Devuelve la lista COMPLETA — sin ningún corte fijo de
-          tamaño, sin una segunda lista para parques distintos, sin
-          combinar esa segunda lista con la primera, sin relleno con
-          estadios que no sean el de hoy.
-     Si la lista queda vacía, ambos consumidores muestran el mismo
-     mensaje: "SIN HISTÓRICOS COMPATIBLES EN ESTE PARQUE" — nunca se
-     presentan equipos de otro parque como si fueran una coincidencia
-     válida.
+       2. Evalúa TODO el histórico recibido — ya NO filtra primero por
+          parque. Para cada fila calcula, en paralelo:
+            - score: VIENTO.scoreMatch(today, h) (mlbpro-viento.js no
+              se tocó, solo se llama)
+            - mismoParque: si esa fila pertenece o no al mismo parque
+              canónico que hoy (solo se usa como desempate, no como
+              filtro).
+       3. Descarta los resultados con score < CORE.UMBRAL_MID (no
+          basta con score > 0: como VIENTO.scoreMatch() suma puntos
+          parciales por temperatura, viento, dirección, humedad,
+          precipitación y parque, un score apenas positivo no es una
+          coincidencia climática real — solo comparte algún factor
+          suelto con el histórico de MLB en general).
+       4. Ordena por: (a) mayor score primero; (b) si empatan en
+          score, mismoParque:true primero; (c) si todavía empatan,
+          fecha histórica más reciente primero.
+       5. Corta a los MAX_HISTORICOS_COMPATIBLES (20) mejores. Esto
+          reemplaza tanto el viejo corte fijo a 5 (que no filtraba
+          score) como una primera versión de esta corrección que
+          devolvía la lista completa con score > 0 sin límite — esa
+          versión intermedia dejaba pasar cientos o miles de filas
+          débiles por juego, inundaba el DOM y contaminaba los
+          promedios de evaluarMercados() con ruido cercano al
+          promedio general de MLB en vez de clima verdaderamente
+          parecido.
+     El mismo parque de hoy sigue sin ser un requisito obligatorio
+     para entrar a la lista, pero queda favorecido por dos vías
+     dentro del propio cálculo — (1) el bono de puntos que
+     VIENTO.scoreMatch() ya suma por mismo parque (por eso ya cuenta
+     dentro del umbral), y (2) el desempate mismoParque cuando dos
+     históricos quedan con el mismo score. Un histórico de otro
+     parque puede aparecer si su condición climática puntúa igual o
+     más alto que las del parque de hoy y pasa el umbral.
+     Si la lista queda vacía (ningún histórico llega a
+     CORE.UMBRAL_MID), ambos consumidores muestran el mismo mensaje:
+     "SIN HISTÓRICOS CLIMÁTICAMENTE COMPATIBLES".
      Cada juego de hoy llama a esta función de nuevo y recibe su
      propio array independiente; ningún array se reutiliza ni se
      mezcla entre juegos.
-     La misma lista devuelta alimenta, sin reconstruirse: mejor
-     coincidencia, porcentaje, cantidad de históricos, promedios de
-     carreras, promedios de ponches, evaluarMercados(), la conclusión
-     de texto y el listado visual completo de "similares históricos".
+     La misma lista devuelta (ya acotada a máximo 20 y con umbral
+     mínimo) alimenta, sin reconstruirse: mejor coincidencia,
+     porcentaje, cantidad de históricos, promedios de carreras,
+     promedios de ponches, evaluarMercados(), la conclusión de texto
+     y el listado visual completo de "similares históricos".
 
    AUDITORÍA TEMPORAL (queda activa, no se guarda en ningún lado):
      seleccionarHistoricosCompatibles() emite un console.log por juego
-     con gamePk, venue crudo de hoy, clave canónica del parque,
-     cantidad de históricos del mismo parque antes de scoreMatch,
-     cantidad después de eliminar score <= 0, y los gamePk históricos
+     con gamePk, venue crudo de hoy, clave canónica del parque, total
+     de histórico evaluado, cuántos quedan con score > 0 (referencia,
+     no es el corte real), el umbral CORE.UMBRAL_MID usado, cuántos
+     pasan ese umbral, cuántos quedan tras el corte final a 20,
+     cuántos de esos son del mismo parque, y los gamePk históricos
      seleccionados. Además, auditarClavesDeHoyYHistorico() corre una
      vez por pantalla y hace console.warn si dos nombres de venue
      crudos distintos producen la misma clave canónica — audita
@@ -134,7 +158,11 @@ button:disabled{opacity:.5}
      corrige a ciegas en esta pasada.
 
    FECHA:
-     23 jul 2026.
+     30 jul 2026 (2ª pasada) — corregido el candado de "solo mismo
+     parque" en seleccionarHistoricosCompatibles() y, tras auditoría
+     propia, corregido el corte de salida: score > 0 sin límite
+     quedó reemplazado por score >= CORE.UMBRAL_MID + máximo 20
+     resultados (antes: 23 jul 2026).
    ============================================================ */
 const CORE = window.MLBPRO_CORE;
 const VIENTO = window.MLBPRO_VIENTO;
@@ -773,27 +801,51 @@ function auditarClavesDeHoyYHistorico(hist) {
 // FUENTE ÚNICA DE SELECCIÓN DE HISTÓRICOS COMPATIBLES.
 // Usada por calcularCoincidencia() y generarConclusionCoincidencia().
 // Ninguna de las dos construye su propia lista por separado.
-// Mismo parque canónico -> scoreMatch -> descartar score<=0 -> orden
-// descendente -> lista completa, sin límite fijo, sin otro parque
-// mezclado.
+//
+// CORREGIDO (30 jul 2026): ya NO filtra primero por mismo parque.
+// Ahora evalúa TODO el histórico -> scoreMatch -> descarta todo lo
+// que no llegue a CORE.UMBRAL_MID (score > 0 solo no basta: deja
+// pasar coincidencias parciales débiles) -> ordena por score desc,
+// con mismoParque como primer desempate y fecha más reciente como
+// segundo desempate -> corta a los MAX_HISTORICOS_COMPATIBLES (20)
+// mejores. Nada de corte fijo a 5 (viejo bug) ni lista sin límite
+// con score > 0 (bug de la primera pasada de esta corrección).
 // ============================================================
+const MAX_HISTORICOS_COMPATIBLES = 20;
+
 function seleccionarHistoricosCompatibles(today, hist, gamePk) {
   const claveParqueHoy = claveCanonica(today.venue);
+  const histTotalEvaluado = hist.length;
 
-  const mismoParque = hist.filter(h => claveCanonica(h.venue) === claveParqueHoy);
-  const histCountAntes = mismoParque.length;
+  const conScore = hist.map(h => ({
+    ...h,
+    mismoParque: claveCanonica(h.venue) === claveParqueHoy,
+    score: VIENTO.scoreMatch(today, h)
+  }));
 
-  const compatibles = mismoParque
-    .map(h => ({ ...h, score: VIENTO.scoreMatch(today, h) }))
-    .filter(x => x.score > 0)
-    .sort((a, b) => b.score - a.score);
+  const histCountConScorePositivo = conScore.filter(x => x.score > 0).length;
+
+  const compatibles = conScore
+    .filter(x => x.score >= CORE.UMBRAL_MID)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (a.mismoParque !== b.mismoParque) return a.mismoParque ? -1 : 1;
+      return String(b.date || "").localeCompare(String(a.date || ""));
+    })
+    .slice(0, MAX_HISTORICOS_COMPATIBLES);
+
+  const histCountMismoParqueSeleccionado = compatibles.filter(x => x.mismoParque).length;
 
   console.log("AUDITORÍA selección histórica", {
     gamePk: gamePk,
     todayVenueCrudo: today.venue,
     claveParqueHoy: claveParqueHoy,
-    histCountMismoParqueAntesDeScore: histCountAntes,
-    histCountDespuesDeScoreCero: compatibles.length,
+    histTotalEvaluado: histTotalEvaluado,
+    histCountConScorePositivo: histCountConScorePositivo,
+    umbralMidUsado: CORE.UMBRAL_MID,
+    histCountTrasUmbralMid: conScore.filter(x => x.score >= CORE.UMBRAL_MID).length,
+    histCountFinalTrasCorte: compatibles.length,
+    histCountMismoParqueSeleccionado: histCountMismoParqueSeleccionado,
     gamePksHistoricosSeleccionados: compatibles.map(r => r.gamePk)
   });
 
@@ -835,7 +887,7 @@ function calcularCoincidencia() {
             <div class="estadio">${venue}</div>
             <div class="meta">Fecha: ${today.date || CORE.hoyISO()} · Hora: ${CORE.horaJuego(today.gameDate)}</div>
             <div class="meta">Temp: ${safe(today.tempF)}°F · Humedad: ${safe(today.humidity)}% · Viento: ${safe(today.windMph)} mph · Dir: ${esNumeroReal(today.windDir) ? today.windDir + "°" : "SIN DATO"}</div>
-            <div class="match bad">SIN HISTÓRICOS COMPATIBLES EN ESTE PARQUE</div>
+            <div class="match bad">SIN HISTÓRICOS CLIMÁTICAMENTE COMPATIBLES</div>
           </div>
         `;
         continue;
@@ -1081,7 +1133,7 @@ function generarConclusionCoincidencia() {
             <div class="meta">Dir viento: ${esNumeroReal(today.windDir) ? today.windDir + "°" : "SIN DATO"}</div>
             ${window.MLBPRO_ROOF_STATUS ? window.MLBPRO_ROOF_STATUS.renderRoofLine(estadio) : ""}
             ${renderBrujula(today, g.gamePk)}
-            <div class="match bad"><b>Conclusión Data Madre:</b> SIN HISTÓRICOS COMPATIBLES EN ESTE PARQUE</div>
+            <div class="match bad"><b>Conclusión Data Madre:</b> SIN HISTÓRICOS CLIMÁTICAMENTE COMPATIBLES</div>
           </div>
         `;
         continue;
@@ -1108,8 +1160,8 @@ function generarConclusionCoincidencia() {
           ${renderBrujula(today, g.gamePk)}
           <details class="match" style="cursor:pointer">
             <summary style="cursor:pointer;font-weight:800"><b>Coincidencia clima/parque:</b> <span class="${cls}">${pct}%</span> · ${ev.carreras || "SIN DATOS"}</summary>
-            <div class="meta" style="margin-top:8px"><b>Base histórica útil:</b> ${histCount} juegos similares del mismo parque</div>
-            <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + parque + techo</div>
+            <div class="meta" style="margin-top:8px"><b>Base histórica útil:</b> ${histCount} juegos históricos compatibles</div>
+            <div class="meta"><b>Qué mide:</b> temperatura + viento + dirección + humedad + precipitación + parque</div>
             <div class="meta"><b>Tipo de brisa:</b> ${ev.brisa}</div>
             <div class="meta"><b>Brisa favorece:</b> ${ev.favorece}</div>
             <div class="meta"><b>Lectura carreras:</b> ${ev.carreras || "SIN DATOS"}</div>
@@ -1122,7 +1174,7 @@ function generarConclusionCoincidencia() {
               <div class="small" style="padding:10px 0;border-bottom:1px solid #222;">
                 <div><b>${i + 1}. ${r.date}</b></div>
                 <div><b>Juego:</b> ${r.away} @ ${r.home}</div>
-                <div><b>Parque:</b> ${r.venue}</div>
+                <div><b>Parque:</b> ${r.venue}${r.mismoParque ? "" : " <span class=\"mid\">(otro parque)</span>"}</div>
                 <div><b>Clima:</b> ${safe(r.tempF)}°F · viento ${safe(r.windMph)} mph · dir ${esNumeroReal(r.windDir) ? r.windDir + "°" : "NO"} · hum ${safe(r.humidity)}%</div>
                 <div><b>Carreras:</b> ${safe(r.totalRuns)}</div>
                 <div><b>Ponches:</b> ${safe(r.totalKs)}</div>
